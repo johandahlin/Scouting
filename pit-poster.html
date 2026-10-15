@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DERT Scouting – Pit Poster</title>
+<link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700|Roboto+Serif:900&display=swap" rel="stylesheet">
+<script src="qrcode.min.js"></script>
+<style>
+  body { margin: 0; font-family: Roboto, Arial, sans-serif; background: #fff; color: #1c1c1c; }
+  .poster { width: 800px; margin: 0 auto; text-align: center; padding: 40px 30px; border-top: 18px solid #12b4af; }
+  .head { display: flex; align-items: center; justify-content: center; gap: 18px; }
+  .head img { width: 90px; }
+  h1 { font: 900 2.6rem "Roboto Serif", Georgia, serif; margin: 0; }
+  .sub { color: #0e8f8b; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  #qr svg { width: 460px; height: 460px; margin: 26px 0 10px; }
+  .url { font-size: 1.35rem; font-weight: 700; }
+  ol { text-align: left; display: inline-block; font-size: 1.2rem; line-height: 1.7; margin-top: 22px; }
+  @media print { .poster { border-top-width: 12px; } }
+</style>
+</head>
+<body>
+<div class="poster">
+  <div class="head">
+    <img src="logo.png" alt="DERT logo">
+    <div><h1>DERT #2040 Scouting</h1><div class="sub">Scan with your iPhone camera</div></div>
+  </div>
+  <div id="qr"></div>
+  <div class="url" id="url"></div>
+  <ol>
+    <li>Scan the code and open the link in <b>Safari</b></li>
+    <li>Tap <b>Share → Add to Home Screen</b></li>
+    <li>Open it once on Wi-Fi so it works offline</li>
+  </ol>
+</div>
+<script>
+  const URL_ = "https://johandahlin.github.io/Scouting/";
+  const qr = qrcode(0, "M"); qr.addData(URL_); qr.make();
+  document.getElementById("qr").innerHTML = qr.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
+  document.getElementById("url").textContent = URL_.replace("https://", "");
+</script>
+</body>
+</html>

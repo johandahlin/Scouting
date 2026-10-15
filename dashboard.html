@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DERT Scouting Dashboard</title>
+<link rel="icon" href="logo.png">
+<link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700|Roboto+Serif:700,900&display=swap" rel="stylesheet">
+<script src="xlsx.full.min.js"></script>
+<script src="data/sample-ilpe2026.js"></script>
+<style>
+  /* Brand from dert2040.org; chart palette from the validated reference palette (slots 1-3) */
+  :root {
+    color-scheme: light;
+    --dark: #1c1c1c; --teal: #12b4af; --teal-ink: #0b7d79;
+    --page: #f4f5f3; --surface: #fcfcfb; --text: #0b0b0b; --text-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+    --mark: #0b7d79; --mark-dim: #b9d9d7; --heat: #12b4af;
+    --good: #006300; --bad: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --text: #ffffff; --text-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+      --mark: #12b4af; --mark-dim: #23504e; --heat: #12b4af; --teal-ink: #3fd0cb;
+      --good: #0ca30c; --bad: #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.45 Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { background: var(--dark); color: #f9f9f9; border-bottom: 4px solid var(--teal); padding: calc(10px + env(safe-area-inset-top, 0px)) 20px 10px; }
+  header .inner { max-width: 1400px; margin: 0 auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header img { width: 42px; height: 42px; }
+  header h1 { margin: 0; font: 900 1.25rem/1.1 "Roboto Serif", Georgia, serif; }
+  header .sub { color: var(--teal); font-weight: 500; font-size: .8rem; letter-spacing: .05em; text-transform: uppercase; }
+  header .source { margin-left: auto; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .85rem; color: #c3c2b7; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
+
+  button, .btn { font: 500 .85rem Roboto, sans-serif; border-radius: 6px; padding: 7px 12px; cursor: pointer; border: 1.5px solid var(--teal); background: var(--teal); color: var(--dark); }
+  button.ghost { background: transparent; color: var(--teal); }
+  header button.ghost { color: #7fe0dc; }
+  input[type=search], select { font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+
+  .filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .seg { display: inline-flex; border: 1.5px solid var(--teal); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; color: var(--teal-ink); padding: 6px 12px; }
+  .seg button.on { background: var(--teal); color: var(--dark); }
+  .filters .label { color: var(--text-2); font-weight: 500; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .tile .k { color: var(--text-2); font-size: .8rem; }
+  .tile .v { font-size: 1.7rem; font-weight: 700; line-height: 1.2; }
+  .tile .d { color: var(--muted); font-size: .8rem; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--teal); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 4px; font: 700 1.1rem "Roboto Serif", Georgia, serif; }
+  .card .hint { color: var(--text-2); font-size: .82rem; margin: 0 0 12px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 1000px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+
+  /* weights */
+  .weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px 18px; margin-bottom: 12px; }
+  .weights label { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; font-size: .82rem; color: var(--text-2); }
+  .weights input { grid-column: 1 / -1; width: 100%; accent-color: var(--teal); }
+  .weights b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .presets button { padding: 4px 10px; font-size: .8rem; }
+
+  /* ranking table */
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+  th { font-size: .75rem; color: var(--text-2); font-weight: 500; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface); }
+  th.sorted::after { content: " ▾"; } th.sorted.asc::after { content: " ▴"; }
+  th:first-child, td:first-child, th.l, td.l { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: color-mix(in srgb, var(--teal) 8%, transparent); }
+  tbody tr.sel { outline: 2px solid var(--teal); outline-offset: -2px; }
+  tr.picked td { opacity: .45; text-decoration: line-through; }
+  tr.dnp td.team { color: var(--bad); }
+  td.team { font-weight: 700; }
+  .scorebar { display: inline-flex; align-items: center; gap: 6px; }
+  .scorebar i { display: inline-block; height: 8px; border-radius: 0 4px 4px 0; background: var(--mark); }
+  .tag { font-size: .7rem; padding: 1px 6px; border-radius: 9px; border: 1px solid currentColor; margin-left: 4px; font-weight: 500; text-decoration: none; display: inline-block; }
+  .tag.us { color: var(--teal-ink); } .tag.dnp { color: var(--bad); } .tag.picked { color: var(--muted); }
+  .marks button { padding: 2px 7px; font-size: .72rem; }
+
+  /* team detail */
+  .detail-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .detail-head .big { font-size: 1.8rem; font-weight: 700; }
+  .mini { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .mini div { background: var(--page); border-radius: 8px; padding: 8px 10px; }
+  .mini .k { font-size: .75rem; color: var(--text-2); } .mini .v { font-size: 1.2rem; font-weight: 700; }
+  .delta.up { color: var(--good); } .delta.down { color: var(--bad); }
+  .delta { font-size: .75rem; font-weight: 500; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+  .chip { background: var(--page); border-radius: 12px; padding: 2px 10px; font-size: .8rem; }
+  .chip b { color: var(--teal-ink); }
+  .notes { max-height: 240px; overflow: auto; margin: 0; padding: 0; list-style: none; font-size: .85rem; }
+  .notes li { padding: 5px 0; border-bottom: 1px solid var(--grid); }
+  .notes .m { color: var(--muted); font-size: .75rem; margin-right: 6px; }
+  h3 { font-size: .85rem; margin: 12px 0 4px; color: var(--text-2); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; }
+
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--text-2); margin: 4px 0 6px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; background: var(--c); vertical-align: -1px; }
+  svg text { fill: var(--muted); font: 11px Roboto, sans-serif; font-variant-numeric: tabular-nums; }
+  svg .lbl { fill: var(--text-2); font-weight: 500; }
+  .tip { position: fixed; pointer-events: none; background: var(--dark); color: #f9f9f9; padding: 7px 10px; border-radius: 6px; font-size: .8rem; max-width: 280px; z-index: 10; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+  .tip b { color: var(--teal); }
+
+  .compare-pick { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .cmp-chip { display: inline-flex; align-items: center; gap: 6px; border: 1.5px solid var(--c); border-radius: 14px; padding: 2px 4px 2px 10px; font-weight: 700; }
+  .cmp-chip button { background: transparent; border: 0; color: var(--text-2); padding: 0 6px; }
+  .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+  details summary { cursor: pointer; color: var(--teal-ink); font-size: .82rem; margin-top: 6px; }
+  .drop { outline: 3px dashed var(--teal); outline-offset: -8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="inner">
+    <img src="logo.png" alt="DERT logo">
+    <div>
+      <h1>DERT #2040 Scouting Dashboard</h1>
+      <div class="sub">REBUILT · Robot rankings &amp; pick list</div>
+    </div>
+    <div class="source">
+      <span id="sourceName">No data</span>
+      <button id="loadBtn">Load Excel file…</button>
+      <button id="sampleBtn" class="ghost">Use sample data</button>
+      <input type="file" id="file" accept=".xlsx,.xls,.csv" hidden>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="filters">
+    <span class="label">Matches:</span>
+    <div class="seg" id="windowSeg">
+      <button data-w="0" class="on">All</button><button data-w="6">Last 6</button><button data-w="3">Last 3</button>
+    </div>
+    <span class="label">Match types:</span>
+    <div class="seg" id="typeSeg">
+      <button data-t="Qual" class="on">Quals</button><button data-t="All">All</button>
+    </div>
+    <input type="search" id="search" placeholder="Find team #…" style="width:140px">
+    <span class="label" style="margin-left:auto">Our team:</span>
+    <input type="search" id="ourTeam" value="2040" style="width:80px">
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2>Pick List</h2>
+    <p class="hint">Score 0–100 = weighted mix of each team's stats, each scaled from worst (0) to best (100) at this event. Drag the sliders to match your strategy. Click a row for details; ✓ marks a team as picked, ✕ as do-not-pick (saved in this browser).</p>
+    <div class="presets" id="presets"></div>
+    <div class="weights" id="weights"></div>
+    <div class="tablewrap"><table id="rankTable"></table></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card" id="detailCard"></section>
+    <section class="card">
+      <h2>Auto vs Teleop</h2>
+      <p class="hint">Each dot is a team: average auto points (→) vs average teleop fuel (↑). Top-right = scores in both. Click a dot to open the team.</p>
+      <div id="scatter"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Compare Teams</h2>
+    <p class="hint">Pick up to 3 teams (alliance partners or opponents). Bars are scaled to the best team at the event; the grey tick is the event average.</p>
+    <div class="compare-pick" id="comparePick"></div>
+    <div id="compare"></div>
+  </section>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+// ---------------------------------------------------------------- columns (must match index.html / Excel headers)
+const C = {
+  type: "Match type", match: "Match #", team: "Team #", alliance: "Alliance", scout: "Scout name", onField: "Robot on field?",
+  autoFuel: "Auto fuel scored", autoMiss: "Auto fuel missed", autoClimb: "Tower climb in auto",
+  teleFuel: "Teleop fuel scored", teleMiss: "Teleop fuel missed", intake: "Intake from", shoot: "Shoots from",
+  terrain: "Drives over / through", inactive: "Inactive Hub behavior", capacity: "Fuel it can carry",
+  defense: "Played defense", defended: "Was defended", climb: "Tower climb", driver: "Driver skill", speed: "Robot speed",
+  problems: "Problems", minor: "Minor fouls", major: "Major fouls", card: "Card", pick: "Pick?", notes: "Observations",
+  autoPts: "Auto pts", telePts: "Teleop fuel pts", climbPts: "Climb pts", total: "Total pts",
+};
+const AUTO_CLIMB = { "Level 1": 15 }, TELE_CLIMB = { "Level 1": 10, "Level 2": 20, "Level 3": 30 };
+
+// Metrics that can be weighted. dir -1 = lower is better.
+const METRICS = [
+  { key: "tele",   label: "Teleop fuel",     fmt: v => v.toFixed(1), w: 8 },
+  { key: "auto",   label: "Auto points",     fmt: v => v.toFixed(1), w: 5 },
+  { key: "climb",  label: "Climb points",    fmt: v => v.toFixed(1), w: 3 },
+  { key: "acc",    label: "Shot accuracy",   fmt: v => pct(v), w: 3 },
+  { key: "cons",   label: "Consistency",     fmt: v => pct(v), w: 3, help: "1 − (std dev ÷ average) of total points" },
+  { key: "rel",    label: "Reliability",     fmt: v => pct(v), w: 4, help: "Share of matches with no problems" },
+  { key: "driver", label: "Driver skill",    fmt: v => v.toFixed(1), w: 2 },
+  { key: "def",    label: "Defense",         fmt: v => pct(v), w: 0, help: "Share of matches playing defense" },
+  { key: "fouls",  label: "Few fouls",       fmt: v => v.toFixed(2), w: 2, dir: -1, help: "Fouls per match (fewer = better)" },
+];
+const PRESETS = {
+  "Balanced": {},
+  "1st pick – scorer": { tele: 10, auto: 6, climb: 2, acc: 4, cons: 4, rel: 5, driver: 2, def: 0, fouls: 1 },
+  "2nd pick – reliable": { tele: 5, auto: 4, climb: 4, acc: 2, cons: 6, rel: 8, driver: 3, def: 1, fouls: 3 },
+  "Defender": { tele: 1, auto: 1, climb: 2, acc: 0, cons: 2, rel: 6, driver: 6, def: 10, fouls: 5 },
+};
+
+// ---------------------------------------------------------------- state
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("dertDash." + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("dertDash." + k, JSON.stringify(v)); } catch (e) {} },
+};
+const S = {
+  raw: [], source: "",
+  win: 0, type: "Qual", search: "",
+  weights: store.get("weights", Object.fromEntries(METRICS.map(m => [m.key, m.w]))),
+  marks: store.get("marks", {}),       // team -> "picked" | "dnp"
+  sort: { key: "score", dir: -1 },
+  sel: null, compare: store.get("compare", []),
+  ours: store.get("ours", "2040"),
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pct = v => Math.round(v * 100) + "%";
+const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0;
+const sd = a => { const m = mean(a); return a.length > 1 ? Math.sqrt(mean(a.map(x => (x - m) ** 2))) : 0; };
+const list = v => String(v || "").split(";").map(s => s.trim()).filter(Boolean);
+
+// ---------------------------------------------------------------- data loading
+function setData(headers, rows, name) {
+  const missing = [C.team, C.match].filter(h => !headers.includes(h));
+  if (missing.length) { alertBox("This file has no '" + missing.join("', '") + "' column. Use the Scans sheet from the DERT workbook."); return; }
+  S.raw = rows.filter(r => r.some(v => v !== "" && v != null)).map(r => {
+    const o = {}; headers.forEach((h, i) => o[h] = r[i] ?? "");
+    // fill points if the sheet has no points columns
+    if (o[C.total] === "" || o[C.total] == null) {
+      o[C.autoPts] = num(o[C.autoFuel]) + (AUTO_CLIMB[o[C.autoClimb]] || 0);
+      o[C.telePts] = num(o[C.teleFuel]);
+      o[C.climbPts] = TELE_CLIMB[o[C.climb]] || 0;
+      o[C.total] = o[C.autoPts] + o[C.telePts] + o[C.climbPts];
+    }
+    return o;
+  }).filter(o => String(o[C.team]).trim() !== "");
+  S.source = name + " · " + S.raw.length + " scans";
+  $("sourceName").textContent = S.source;
+  S.sel = null;
+  render();
+}
+function loadSample() {
+  if (!window.SAMPLE_DATA) return alertBox("Sample data file (data/sample-ilpe2026.js) not found.");
+  setData(SAMPLE_DATA.headers, SAMPLE_DATA.rows, SAMPLE_DATA.name);
+  store.set("lastSource", "sample");
+}
+function loadFile(file) {
+  if (!window.XLSX) return alertBox("Excel reader (xlsx.full.min.js) not found next to dashboard.html.");
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
+      const sheetName = wb.SheetNames.includes("Scans") ? "Scans" : wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: "" });
+      const headers = rows.shift().map(h => String(h).trim());
+      setData(headers, rows, file.name);
+      store.set("lastFile", { name: file.name, headers, rows });
+      store.set("lastSource", "file");
+    } catch (err) { alertBox("Could not read that file: " + err.message); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function alertBox(msg) { $("tiles").innerHTML = `<div class="tile" style="grid-column:1/-1;border-color:var(--bad)"><div class="k">Problem</div><div>${esc(msg)}</div></div>`; }
+
+// ---------------------------------------------------------------- stats
+function scopedRows() {
+  return S.raw.filter(r => S.type === "All" || String(r[C.type] || "Qual") === S.type);
+}
+function teamStats() {
+  const by = {};
+  scopedRows().forEach(r => { (by[r[C.team]] ||= []).push(r); });
+  const teams = Object.entries(by).map(([team, rs]) => {
+    rs.sort((a, b) => num(a[C.match]) - num(b[C.match]));
+    const all = rs;
+    if (S.win) rs = rs.slice(-S.win);
+    const played = rs.filter(r => r[C.onField] !== "No show");
+    const totals = played.map(r => num(r[C.total]));
+    const scored = played.reduce((s, r) => s + num(r[C.autoFuel]) + num(r[C.teleFuel]), 0);
+    const missed = played.reduce((s, r) => s + num(r[C.autoMiss]) + num(r[C.teleMiss]), 0);
+    const drv = played.map(r => num(r[C.driver])).filter(Boolean);
+    const avgTotal = mean(totals);
+    return {
+      team: String(team), rows: rs, allRows: all, n: rs.length, noShows: rs.length - played.length,
+      total: avgTotal, best: Math.max(0, ...totals),
+      auto: mean(played.map(r => num(r[C.autoPts]))),
+      tele: mean(played.map(r => num(r[C.telePts]))),
+      climb: mean(played.map(r => num(r[C.climbPts]))),
+      acc: scored + missed ? scored / (scored + missed) : 0,
+      cons: avgTotal ? Math.max(0, 1 - sd(totals) / avgTotal) : 0,
+      rel: rs.length ? rs.filter(r => !String(r[C.problems]).trim() && r[C.onField] !== "No show").length / rs.length : 0,
+      driver: mean(drv),
+      def: played.length ? played.filter(r => ["Some", "A lot"].includes(r[C.defense])).length / played.length : 0,
+      fouls: played.length ? played.reduce((s, r) => s + num(r[C.minor]) + num(r[C.major]), 0) / played.length : 0,
+      climbRate: played.length ? played.filter(r => String(r[C.climb]).startsWith("Level")).length / played.length : 0,
+      pickYes: rs.filter(r => r[C.pick] === "Yes").length,
+    };
+  });
+  // normalise each metric 0..1 across teams, then weighted score 0..100
+  const range = {};
+  METRICS.forEach(m => { const v = teams.map(t => t[m.key]); range[m.key] = [Math.min(...v), Math.max(...v)]; });
+  const wsum = METRICS.reduce((s, m) => s + (S.weights[m.key] || 0), 0) || 1;
+  teams.forEach(t => {
+    t.norm = {};
+    METRICS.forEach(m => {
+      const [lo, hi] = range[m.key];
+      let x = hi > lo ? (t[m.key] - lo) / (hi - lo) : 0.5;
+      if (m.dir === -1) x = 1 - x;
+      t.norm[m.key] = x;
+    });
+    t.score = 100 * METRICS.reduce((s, m) => s + (S.weights[m.key] || 0) * t.norm[m.key], 0) / wsum;
+  });
+  [...teams].sort((a, b) => b.score - a.score).forEach((t, i) => t.rank = i + 1);
+  const pctile = key => { const v = teams.map(t => t[key]).sort((a, b) => a - b); return x => v.length > 1 ? v.filter(y => y < x).length / (v.length - 1) : 0.5; };
+  teams.pctOf = Object.fromEntries(["total", "auto", "tele", "climb", "acc", "cons", "rel", "driver", "score"].map(k => [k, pctile(k)]));
+  teams.avg = Object.fromEntries(["total", "auto", "tele", "climb", "acc", "cons", "rel", "driver", "climbRate"].map(k => [k, mean(teams.map(t => t[k]))]));
+  teams.max = Object.fromEntries(["total", "auto", "tele", "climb", "best"].map(k => [k, Math.max(0, ...teams.map(t => t[k]))]));
+  return teams;
+}
+
+// ---------------------------------------------------------------- render
+let T = [];
+function render() {
+  T = teamStats();
+  renderTiles(); renderWeights(); renderTable(); renderDetail(); renderScatter(); renderCompare();
+}
+
+function renderTiles() {
+  if (!S.raw.length) { $("tiles").innerHTML = `<div class="tile" style="grid-column:1/-1"><div class="k">No data yet</div><div>Load the Excel workbook (Scans sheet) or click <b>Use sample data</b>.</div></div>`; return; }
+  const rows = scopedRows();
+  const matches = new Set(rows.map(r => r[C.match])).size;
+  const top = [...T].sort((a, b) => a.rank - b.rank)[0];
+  const ours = T.find(t => t.team === S.ours);
+  const tiles = [
+    ["Teams scouted", T.length, matches + " matches · " + rows.length + " scans"],
+    ["Avg robot points", T.avg.total.toFixed(1), "per match, all teams"],
+    ["Top pick", top ? top.team : "–", top ? "score " + top.score.toFixed(0) + " · " + top.total.toFixed(1) + " pts/match" : ""],
+    ["Best single match", T.max.best, (T.find(t => t.best === T.max.best) || {}).team ? "Team " + T.find(t => t.best === T.max.best).team : ""],
+    ["Climb rate (event)", pct(T.avg.climbRate), "endgame climbs per match"],
+  ];
+  if (ours) tiles.push(["Team " + ours.team + " (us)", "#" + ours.rank, ours.total.toFixed(1) + " pts/match"]);
+  $("tiles").innerHTML = tiles.map(([k, v, d]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="d">${esc(d)}</div></div>`).join("");
+}
+
+function renderWeights() {
+  $("presets").innerHTML = `<span class="label" style="color:var(--text-2);font-size:.82rem;align-self:center">Presets:</span>` +
+    Object.keys(PRESETS).map(p => `<button class="ghost" data-preset="${esc(p)}">${esc(p)}</button>`).join("");
+  $("weights").innerHTML = METRICS.map(m => `
+    <label title="${esc(m.help || "")}">${esc(m.label)}${m.help ? " ⓘ" : ""} <b id="wv-${m.key}">${S.weights[m.key] ?? 0}</b>
+      <input type="range" min="0" max="10" step="1" value="${S.weights[m.key] ?? 0}" data-w="${m.key}">
+    </label>`).join("");
+}
+
+const COLS = [
+  { key: "rank", label: "#", cls: "l", get: t => t.rank },
+  { key: "team", label: "Team", cls: "l", get: t => +t.team },
+  { key: "score", label: "Score", get: t => t.score },
+  { key: "total", label: "Avg pts", get: t => t.total, f: v => v.toFixed(1), heat: 1 },
+  { key: "auto", label: "Auto", get: t => t.auto, f: v => v.toFixed(1), heat: 1 },
+  { key: "tele", label: "Teleop fuel", get: t => t.tele, f: v => v.toFixed(1), heat: 1 },
+  { key: "climb", label: "Climb", get: t => t.climb, f: v => v.toFixed(1), heat: 1 },
+  { key: "acc", label: "Accuracy", get: t => t.acc, f: pct, heat: 1 },
+  { key: "cons", label: "Consistency", get: t => t.cons, f: pct, heat: 1 },
+  { key: "rel", label: "Reliability", get: t => t.rel, f: pct, heat: 1 },
+  { key: "driver", label: "Driver", get: t => t.driver, f: v => v ? v.toFixed(1) : "–", heat: 1 },
+  { key: "best", label: "Best", get: t => t.best },
+  { key: "n", label: "Matches", get: t => t.n },
+];
+function renderTable() {
+  if (!T.length) { $("rankTable").innerHTML = `<tr><td class="empty">No teams yet.</td></tr>`; return; }
+  const col = COLS.find(c => c.key === S.sort.key) || COLS[2];
+  let rows = [...T].sort((a, b) => (col.get(a) - col.get(b)) * S.sort.dir || a.rank - b.rank);
+  if (S.search) rows = rows.filter(t => t.team.includes(S.search));
+  const maxScore = Math.max(1, ...T.map(t => t.score));
+  const head = `<thead><tr>${COLS.map(c => `<th class="${c.cls || ""} ${c.key === S.sort.key ? "sorted" + (S.sort.dir > 0 ? " asc" : "") : ""}" data-sort="${c.key}">${c.label}</th>`).join("")}<th class="l">Mark</th></tr></thead>`;
+  const body = rows.map(t => {
+    const mark = S.marks[t.team];
+    const cells = COLS.map(c => {
+      const v = c.get(t);
+      if (c.key === "team") return `<td class="team l">${esc(t.team)}${t.team === S.ours ? '<span class="tag us">us</span>' : ""}${mark === "dnp" ? '<span class="tag dnp">avoid</span>' : ""}${mark === "picked" ? '<span class="tag picked">picked</span>' : ""}</td>`;
+      if (c.key === "score") return `<td><span class="scorebar"><i style="width:${Math.max(2, 70 * v / maxScore)}px"></i>${v.toFixed(0)}</span></td>`;
+      const tint = c.heat ? `style="background:color-mix(in srgb, var(--heat) ${Math.round(T.pctOf[c.key](v) * 45)}%, transparent)"` : "";
+      return `<td class="${c.cls || ""}" ${tint}>${c.f ? c.f(v) : v}</td>`;
+    }).join("");
+    return `<tr data-team="${esc(t.team)}" class="${mark || ""} ${S.sel === t.team ? "sel" : ""}">${cells}
+      <td class="l marks"><button class="ghost" data-mark="picked" title="Picked by another alliance">✓</button> <button class="ghost" data-mark="dnp" title="Do not pick">✕</button> <button class="ghost" data-cmp title="Add to compare">+</button></td></tr>`;
+  }).join("");
+  $("rankTable").innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+// ---------------------------------------------------------------- team detail
+function renderDetail() {
+  const card = $("detailCard");
+  const t = T.find(x => x.team === S.sel) || T.find(x => x.team === S.ours) || [...T].sort((a, b) => a.rank - b.rank)[0];
+  if (!t) { card.innerHTML = `<h2>Team Detail</h2><p class="empty">Load data to see team details.</p>`; return; }
+  const d = (v, avg, f) => { const diff = v - avg; const cls = diff >= 0 ? "up" : "down"; return `<span class="delta ${cls}">${diff >= 0 ? "▲" : "▼"} ${f(Math.abs(diff))} vs avg</span>`; };
+  const f1 = v => v.toFixed(1);
+  const counts = key => { const c = {}; t.rows.forEach(r => list(r[key]).forEach(v => c[v] = (c[v] || 0) + 1)); return Object.entries(c).sort((a, b) => b[1] - a[1]); };
+  const chips = key => { const c = counts(key); return c.length ? c.map(([v, n]) => `<span class="chip">${esc(v)} <b>${n}</b></span>`).join("") : '<span class="chip">–</span>'; };
+  const notes = t.rows.filter(r => String(r[C.notes]).trim() || String(r[C.problems]).trim())
+    .map(r => `<li><span class="m">Q${esc(r[C.match])} · ${esc(r[C.scout])}</span>${esc(r[C.notes])}${String(r[C.problems]).trim() ? ` <span class="tag dnp">${esc(r[C.problems])}</span>` : ""}</li>`).reverse().join("");
+  card.innerHTML = `
+    <div class="detail-head">
+      <h2 style="margin:0">Team <span class="big">${esc(t.team)}</span></h2>
+      <span class="chip">Rank <b>#${t.rank}</b> of ${T.length}</span><span class="chip">Score <b>${t.score.toFixed(0)}</b></span>
+      <span class="chip">${t.n} matches${S.win ? " (last " + S.win + ")" : ""}</span>
+      <select id="teamSelect" style="margin-left:auto">${[...T].sort((a, b) => a.team - b.team).map(x => `<option ${x.team === t.team ? "selected" : ""}>${x.team}</option>`).join("")}</select>
+    </div>
+    <div class="mini">
+      <div><div class="k">Avg total pts</div><div class="v">${f1(t.total)}</div>${d(t.total, T.avg.total, f1)}</div>
+      <div><div class="k">Auto pts</div><div class="v">${f1(t.auto)}</div>${d(t.auto, T.avg.auto, f1)}</div>
+      <div><div class="k">Teleop fuel</div><div class="v">${f1(t.tele)}</div>${d(t.tele, T.avg.tele, f1)}</div>
+      <div><div class="k">Accuracy</div><div class="v">${pct(t.acc)}</div>${d(t.acc, T.avg.acc, v => Math.round(v * 100) + " pp")}</div>
+      <div><div class="k">Climb rate</div><div class="v">${pct(t.climbRate)}</div>${d(t.climbRate, T.avg.climbRate, v => Math.round(v * 100) + " pp")}</div>
+      <div><div class="k">Reliability</div><div class="v">${pct(t.rel)}</div>${d(t.rel, T.avg.rel, v => Math.round(v * 100) + " pp")}</div>
+    </div>
+    <h3>Points per match</h3>
+    <div class="legend"><span style="--c:var(--s1)">Auto</span><span style="--c:var(--s2)">Teleop fuel</span><span style="--c:var(--s3)">Climb</span><span style="--c:var(--muted)">— event avg</span></div>
+    <div id="matchChart"></div>
+    <details><summary>Show as table</summary><div class="tablewrap"><table>
+      <thead><tr><th class="l">Match</th><th>Auto</th><th>Teleop</th><th>Climb</th><th>Total</th><th class="l">Scout</th></tr></thead>
+      <tbody>${t.rows.map(r => `<tr><td class="l">Q${esc(r[C.match])}</td><td>${num(r[C.autoPts])}</td><td>${num(r[C.telePts])}</td><td>${num(r[C.climbPts])}</td><td>${num(r[C.total])}</td><td class="l">${esc(r[C.scout])}</td></tr>`).join("")}</tbody></table></div></details>
+    <h3>Intake from</h3><div class="chips">${chips(C.intake)}</div>
+    <h3>Shoots from</h3><div class="chips">${chips(C.shoot)}</div>
+    <h3>When Hub is inactive</h3><div class="chips">${chips(C.inactive)}</div>
+    <h3>Climb</h3><div class="chips">${chips(C.climb)}</div>
+    <h3>Scout notes</h3><ul class="notes">${notes || '<li class="empty">No notes</li>'}</ul>`;
+  matchChart(t);
+}
+
+function matchChart(t) {
+  const el = $("matchChart"), W = Math.max(320, el.clientWidth || 560), H = 200, m = { l: 34, r: 58, t: 8, b: 24 };
+  const rows = t.rows, n = rows.length;
+  const ymax = niceMax(Math.max(T.avg.total, ...rows.map(r => num(r[C.total]))));
+  const y = v => m.t + (H - m.t - m.b) * (1 - v / ymax);
+  const band = (W - m.l - m.r) / Math.max(1, n), bw = Math.min(28, band * 0.6);
+  let s = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Points per match for team ${t.team}">`;
+  ticks(ymax).forEach(v => s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`);
+  s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+  rows.forEach((r, i) => {
+    const cx = m.l + band * i + band / 2, x0 = cx - bw / 2;
+    const parts = [[num(r[C.autoPts]), "var(--s1)"], [num(r[C.telePts]), "var(--s2)"], [num(r[C.climbPts]), "var(--s3)"]];
+    let acc = 0; const segs = parts.filter(p => p[0] > 0);
+    segs.forEach(([v, c], k) => {
+      const top = y(acc + v), bot = y(acc);
+      const h = Math.max(0, bot - top - (k > 0 ? 2 : 0));       // 2px surface gap between stacked segments
+      const last = k === segs.length - 1;
+      s += last ? `<path d="${roundTop(x0, top, bw, h)}" fill="${c}"/>` : `<rect x="${x0}" y="${top}" width="${bw}" height="${h}" fill="${c}"/>`;
+      acc += v;
+    });
+    s += `<rect x="${cx - band / 2}" y="${m.t}" width="${band}" height="${H - m.t - m.b}" fill="transparent" data-tip="${esc(`<b>Q${r[C.match]}</b> · ${r[C.alliance]} · scout ${r[C.scout]}<br>Auto ${num(r[C.autoPts])} · Teleop ${num(r[C.telePts])} · Climb ${num(r[C.climbPts])}<br><b>Total ${num(r[C.total])}</b>${r[C.problems] ? "<br>⚠ " + r[C.problems] : ""}`)}"/>`;
+    if (n <= 16 || i % Math.ceil(n / 16) === 0) s += `<text x="${cx}" y="${H - 8}" text-anchor="middle">Q${esc(r[C.match])}</text>`;
+  });
+  s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(T.avg.total)}" y2="${y(T.avg.total)}" stroke="var(--muted)" stroke-width="1"/>`;
+  s += `<text x="${W - m.r + 6}" y="${y(T.avg.total) + 4}" class="lbl">avg ${T.avg.total.toFixed(0)}</text></svg>`;
+  el.innerHTML = s;
+}
+function roundTop(x, y, w, h) { const r = Math.min(4, w / 2, h); return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`; }
+function niceMax(v) {   // smallest "nice" number >= v that splits into 4 clean ticks
+  if (v <= 0) return 10;
+  const p = 10 ** Math.floor(Math.log10(v)), f = v / p;
+  return [1, 1.2, 1.6, 2, 2.4, 3, 4, 5, 6, 8, 10].find(s => s >= f - 1e-9) * p;
+}
+function ticks(max) { const step = max / 4; return [0, 1, 2, 3, 4].map(i => +(i * step).toFixed(1)); }
+
+// ---------------------------------------------------------------- scatter
+function renderScatter() {
+  const el = $("scatter");
+  if (!T.length) { el.innerHTML = `<p class="empty">No data.</p>`; return; }
+  const W = Math.max(320, el.clientWidth || 560), H = 340, m = { l: 40, r: 14, t: 10, b: 34 };
+  const xmax = niceMax(T.max.auto), ymax = niceMax(T.max.tele);
+  const x = v => m.l + (W - m.l - m.r) * v / xmax, y = v => m.t + (H - m.t - m.b) * (1 - v / ymax);
+  let s = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Average auto points versus average teleop fuel per team">`;
+  ticks(ymax).forEach(v => s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`);
+  ticks(xmax).forEach(v => s += `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${v}</text>`);
+  s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+  s += `<text x="${W - m.r}" y="${H - 4}" text-anchor="end" class="lbl">Avg auto pts →</text><text x="${m.l}" y="${m.t + 10}" class="lbl" dx="6">↑ Avg teleop fuel</text>`;
+  // event-average crosshair
+  s += `<line x1="${x(T.avg.auto)}" x2="${x(T.avg.auto)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--axis)"/><line x1="${m.l}" x2="${W - m.r}" y1="${y(T.avg.tele)}" y2="${y(T.avg.tele)}" stroke="var(--axis)"/>`;
+  const cmpColor = team => { const i = S.compare.indexOf(team); return i >= 0 ? `var(--s${i + 1})` : null; };
+  const labelled = new Set([...T].sort((a, b) => a.rank - b.rank).slice(0, 5).map(t => t.team).concat(S.compare, [S.sel, S.ours]));
+  const order = [...T].sort((a, b) => (cmpColor(a.team) || a.team === S.sel ? 1 : 0) - (cmpColor(b.team) || b.team === S.sel ? 1 : 0));
+  order.forEach(t => {
+    const cx = x(t.auto), cy = y(t.tele), c = cmpColor(t.team);
+    const hi = c || t.team === S.sel || t.team === S.ours;
+    s += `<circle cx="${cx}" cy="${cy}" r="${hi ? 6 : 5}" fill="${c || (hi ? "var(--mark)" : "var(--mark-dim)")}" stroke="var(--surface)" stroke-width="2"/>`;
+    if (labelled.has(t.team)) s += `<text x="${cx + 8}" y="${cy + 4}" class="lbl">${esc(t.team)}</text>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="12" fill="transparent" style="cursor:pointer" data-team="${esc(t.team)}" data-tip="${esc(`<b>Team ${t.team}</b> · rank #${t.rank}<br>Auto ${t.auto.toFixed(1)} · Teleop fuel ${t.tele.toFixed(1)}<br>Avg total ${t.total.toFixed(1)}`)}"/>`;
+  });
+  el.innerHTML = s + "</svg>";
+}
+
+// ---------------------------------------------------------------- compare
+function renderCompare() {
+  S.compare = S.compare.filter(team => T.some(t => t.team === team));
+  const opts = [...T].sort((a, b) => a.team - b.team).filter(t => !S.compare.includes(t.team)).map(t => `<option>${t.team}</option>`).join("");
+  $("comparePick").innerHTML = S.compare.map((team, i) => `<span class="cmp-chip" style="--c:var(--s${i + 1})">${esc(team)}<button data-rm="${esc(team)}" title="Remove">✕</button></span>`).join("") +
+    (S.compare.length < 3 && T.length ? `<select id="cmpAdd"><option value="">+ Add team…</option>${opts}</select>` : "");
+  const el = $("compare");
+  if (!S.compare.length) { el.innerHTML = `<p class="empty">Add teams with the + button in the pick list, or the selector above.</p>`; return; }
+  const teams = S.compare.map(team => T.find(t => t.team === team));
+  const rows = [
+    ["Avg total pts", "total", v => v.toFixed(1)], ["Auto pts", "auto", v => v.toFixed(1)], ["Teleop fuel", "tele", v => v.toFixed(1)],
+    ["Climb pts", "climb", v => v.toFixed(1)], ["Shot accuracy", "acc", pct], ["Consistency", "cons", pct], ["Reliability", "rel", pct], ["Driver skill", "driver", v => v.toFixed(1)],
+  ];
+  const W = Math.max(320, el.clientWidth || 900), lw = 110, vw = 52, bh = 10, gap = 3, rowH = teams.length * (bh + gap) + 14;
+  const H = rows.length * rowH + 4;
+  let s = `<div class="legend">${teams.map((t, i) => `<span style="--c:var(--s${i + 1})">Team ${t.team}</span>`).join("")}<span style="--c:var(--muted)">| event avg</span></div>`;
+  s += `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Team comparison">`;
+  rows.forEach(([label, key, f], ri) => {
+    const y0 = ri * rowH + 4, max = Math.max(...T.map(t => t[key])) || 1, bx = lw, bwMax = W - lw - vw - 10;
+    s += `<text x="0" y="${y0 + (teams.length * (bh + gap)) / 2 + 4}" class="lbl">${label}</text>`;
+    teams.forEach((t, i) => {
+      const yy = y0 + i * (bh + gap), w = bwMax * t[key] / max;
+      if (w < 5) s += w > 0 ? `<rect x="${bx}" y="${yy}" width="${w}" height="${bh}" fill="var(--s${i + 1})"/>` : "";
+      else s += `<path d="M${bx},${yy}H${bx + w - 4}Q${bx + w},${yy} ${bx + w},${yy + 4}V${yy + bh - 4}Q${bx + w},${yy + bh} ${bx + w - 4},${yy + bh}H${bx}Z" fill="var(--s${i + 1})"/>`;
+      s += `<text x="${bx + w + 6}" y="${yy + bh - 1}">${f(t[key])}</text>`;
+    });
+    const ax = bx + bwMax * T.avg[key] / max;
+    s += `<line x1="${ax}" x2="${ax}" y1="${y0 - 2}" y2="${y0 + teams.length * (bh + gap)}" stroke="var(--muted)" stroke-width="1.5"/>`;
+  });
+  el.innerHTML = s + "</svg>";
+}
+
+// ---------------------------------------------------------------- events
+$("loadBtn").onclick = () => $("file").click();
+$("file").onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
+$("sampleBtn").onclick = loadSample;
+document.addEventListener("dragover", e => { e.preventDefault(); document.body.classList.add("drop"); });
+document.addEventListener("dragleave", e => { if (!e.relatedTarget) document.body.classList.remove("drop"); });
+document.addEventListener("drop", e => { e.preventDefault(); document.body.classList.remove("drop"); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+
+$("windowSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.win = +b.dataset.w; [...$("windowSeg").children].forEach(x => x.classList.toggle("on", x === b)); render(); };
+$("typeSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.type = b.dataset.t; [...$("typeSeg").children].forEach(x => x.classList.toggle("on", x === b)); render(); };
+$("search").oninput = e => { S.search = e.target.value.trim(); renderTable(); };
+$("ourTeam").value = S.ours;
+$("ourTeam").onchange = e => { S.ours = e.target.value.trim(); store.set("ours", S.ours); render(); };
+
+$("weights").oninput = e => {
+  const k = e.target.dataset.w; if (!k) return;
+  S.weights[k] = +e.target.value; $("wv-" + k).textContent = e.target.value; store.set("weights", S.weights);
+  T = teamStats(); renderTable(); renderTiles(); renderDetail(); renderScatter();
+};
+$("presets").onclick = e => {
+  const p = e.target.dataset.preset; if (!p) return;
+  S.weights = Object.assign(Object.fromEntries(METRICS.map(m => [m.key, m.w])), PRESETS[p]); store.set("weights", S.weights); render();
+};
+$("rankTable").onclick = e => {
+  const th = e.target.closest("th[data-sort]");
+  if (th) { const k = th.dataset.sort; S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : (k === "rank" || k === "team" ? 1 : -1) }; renderTable(); return; }
+  const tr = e.target.closest("tr[data-team]"); if (!tr) return;
+  const team = tr.dataset.team, mb = e.target.closest("button");
+  if (mb && mb.dataset.mark) { S.marks[team] = S.marks[team] === mb.dataset.mark ? undefined : mb.dataset.mark; store.set("marks", S.marks); renderTable(); return; }
+  if (mb && mb.hasAttribute("data-cmp")) { addCompare(team); return; }
+  S.sel = team; renderTable(); renderDetail(); renderScatter();
+  if (window.innerWidth < 1000) $("detailCard").scrollIntoView({ behavior: "smooth" });
+};
+function addCompare(team) {
+  if (!S.compare.includes(team)) { if (S.compare.length >= 3) S.compare.shift(); S.compare.push(team); }
+  store.set("compare", S.compare); renderCompare(); renderScatter();
+}
+document.addEventListener("change", e => {
+  if (e.target.id === "teamSelect") { S.sel = e.target.value; renderTable(); renderDetail(); renderScatter(); }
+  if (e.target.id === "cmpAdd" && e.target.value) addCompare(e.target.value);
+});
+$("comparePick").onclick = e => { const b = e.target.closest("button[data-rm]"); if (!b) return; S.compare = S.compare.filter(t => t !== b.dataset.rm); store.set("compare", S.compare); renderCompare(); renderScatter(); };
+$("scatter").onclick = e => { const c = e.target.closest("[data-team]"); if (!c) return; S.sel = c.dataset.team; renderTable(); renderDetail(); renderScatter(); };
+
+// shared tooltip
+const tip = $("tip");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest && e.target.closest("[data-tip]");
+  if (!t) { tip.hidden = true; return; }
+  tip.innerHTML = t.dataset.tip; tip.hidden = false;
+  const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px";
+});
+let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDetail(); renderScatter(); renderCompare(); }, 150); });
+
+// ---------------------------------------------------------------- start: last file, else sample
+(function init() {
+  const last = store.get("lastSource", "sample"), file = store.get("lastFile", null);
+  if (last === "file" && file) setData(file.headers, file.rows, file.name);
+  else if (window.SAMPLE_DATA) loadSample();
+  else render();
+})();
+</script>
+</body>
+</html>
