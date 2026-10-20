@@ -41,7 +41,8 @@
 
   button, .btn { font: 500 .85rem Roboto, sans-serif; border-radius: 6px; padding: 7px 12px; cursor: pointer; border: 1.5px solid var(--teal); background: var(--teal); color: var(--dark); }
   button.ghost { background: transparent; color: var(--teal); }
-  header button.ghost { color: #7fe0dc; }
+  header button.ghost, header a.nav { color: #7fe0dc; }
+  header a.nav { font-weight: 500; text-decoration: none; }
   input[type=search], select { font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
 
   .filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
@@ -129,6 +130,7 @@
       <div class="sub">REBUILT · Robot rankings &amp; pick list</div>
     </div>
     <div class="source">
+      <a class="nav" href="matches.html">Match predictor</a>
       <span id="sourceName">No data</span>
       <button id="loadBtn">Load Excel file…</button>
       <button id="sampleBtn" class="ghost">Use sample data</button>

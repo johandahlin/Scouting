@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DERT Match Predictor</title>
+<link rel="icon" href="logo.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#1c1c1c">
+<link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700|Roboto+Serif:700,900&display=swap" rel="stylesheet">
+<style>
+  /* Same tokens as dashboard.html. Alliance red/blue pass the color-blind separation check in both themes. */
+  :root {
+    color-scheme: light;
+    --dark: #1c1c1c; --teal: #12b4af; --teal-ink: #0b7d79;
+    --page: #f4f5f3; --surface: #fcfcfb; --text: #0b0b0b; --text-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+    --mark: #0b7d79; --mark-dim: #b9d9d7;
+    --red: #d63a3a; --blue: #1f6fd1; --good: #006300; --bad: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --text: #ffffff; --text-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+      --mark: #12b4af; --mark-dim: #23504e; --teal-ink: #3fd0cb;
+      --red: #e05252; --blue: #3d86e0; --good: #0ca30c; --bad: #e66767;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.45 Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { background: var(--dark); color: #f9f9f9; border-bottom: 4px solid var(--teal); padding: calc(10px + env(safe-area-inset-top, 0px)) 20px 10px; }
+  header .inner { max-width: 1200px; margin: 0 auto; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header img { width: 42px; height: 42px; }
+  header h1 { margin: 0; font: 900 1.25rem/1.1 "Roboto Serif", Georgia, serif; }
+  header .sub { color: var(--teal); font-weight: 500; font-size: .8rem; letter-spacing: .05em; text-transform: uppercase; }
+  header nav { margin-left: auto; display: flex; gap: 14px; font-size: .85rem; }
+  header nav a { color: #7fe0dc; font-weight: 500; text-decoration: none; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px 20px 40px; }
+  @media (max-width: 600px) { header, .wrap { padding-left: 16px; padding-right: 16px; } }
+
+  button, .btn { font: 500 .85rem Roboto, sans-serif; border-radius: 6px; padding: 7px 12px; cursor: pointer; border: 1.5px solid var(--teal); background: var(--teal); color: var(--dark); }
+  button.ghost { background: transparent; color: var(--teal-ink); }
+  input, select { font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); min-width: 0; }
+  a { color: var(--teal-ink); }
+
+  .filters { display: flex; gap: 8px 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .filters .label { color: var(--text-2); font-weight: 500; }
+  .filters .group { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1.5px solid var(--teal); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; color: var(--teal-ink); padding: 6px 12px; }
+  .seg button.on { background: var(--teal); color: var(--dark); }
+  #teamSelect { max-width: 260px; }
+
+  .srcline { display: flex; gap: 6px 12px; align-items: center; flex-wrap: wrap; color: var(--text-2); font-size: .82rem; margin-bottom: 12px; }
+  .srcline button { padding: 3px 10px; font-size: .8rem; }
+  details.live summary { cursor: pointer; color: var(--teal-ink); }
+  details.live .box { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0 2px; }
+  details.live input { width: 280px; }
+  .notice { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--teal); border-radius: 8px; padding: 9px 12px; margin-bottom: 12px; }
+  .notice.warn { border-left-color: var(--bad); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .tile .k { color: var(--text-2); font-size: .8rem; }
+  .tile .v { font-size: 1.7rem; font-weight: 700; line-height: 1.2; }
+  .tile .d { color: var(--muted); font-size: .8rem; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--teal); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; min-width: 0; }
+  .card h2 { margin: 0 0 4px; font: 700 1.1rem "Roboto Serif", Georgia, serif; }
+  .card .hint { color: var(--text-2); font-size: .82rem; margin: 0 0 10px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+  .empty { color: var(--muted); padding: 16px 0; text-align: center; }
+
+  /* match list: one row per match, folds to two lines on phones */
+  .mrow { display: grid; grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) 180px 96px; grid-template-areas: "name with against chance res";
+          gap: 8px 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--grid); }
+  .mrow:last-child { border-bottom: 0; }
+  .mname { grid-area: name; } .with { grid-area: with; } .against { grid-area: against; } .meter { grid-area: chance; } .res { grid-area: res; }
+  @media (max-width: 760px) {
+    .mrow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "name res" "with against" "chance chance"; }
+    .res { text-align: right; }
+  }
+  .mname b { display: block; font-size: 1.05rem; }
+  .mname span { color: var(--muted); font-size: .75rem; }
+  .al { border-left: 4px solid var(--c); padding-left: 8px; min-width: 0; }
+  .al.red { --c: var(--red); } .al.blue { --c: var(--blue); }
+  .al .side { font-size: .7rem; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+  button.tm { background: none; border: 0; border-radius: 4px; padding: 1px 2px; margin-right: 8px; color: var(--text); font: 500 .95rem Roboto, sans-serif; font-variant-numeric: tabular-nums; }
+  button.tm:hover { background: color-mix(in srgb, var(--teal) 12%, transparent); }
+  button.tm.me { font-weight: 700; text-decoration: underline 2px var(--teal); text-underline-offset: 3px; }
+  button.tm small { color: var(--muted); font-size: .72rem; font-weight: 400; margin-left: 2px; }
+  .meter { display: flex; align-items: center; gap: 8px; }
+  .meter .track { position: relative; flex: 1; height: 8px; border-radius: 4px; background: var(--mark-dim); }
+  .meter .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; background: var(--mark); }
+  .meter .mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--text-2); }
+  .meter .pv { min-width: 40px; text-align: right; font-weight: 700; }
+  .meter .na { color: var(--muted); font-size: .8rem; }
+  .res { font-variant-numeric: tabular-nums; color: var(--text-2); }
+  .res .wl { font-weight: 700; margin-right: 4px; }
+  .res.W .wl { color: var(--good); } .res.L .wl { color: var(--bad); }
+
+  .tablewrap { overflow: auto; max-height: 460px; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 6px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+  th { font-size: .75rem; color: var(--text-2); font-weight: 500; position: sticky; top: 0; background: var(--surface); }
+  th.l, td.l { text-align: left; }
+  td.name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+  th.basis { color: var(--teal-ink); box-shadow: inset 0 -2px var(--teal); }
+  tbody tr[data-team] { cursor: pointer; }
+  tbody tr[data-team]:hover { background: color-mix(in srgb, var(--teal) 8%, transparent); }
+  tbody tr.sel { outline: 2px solid var(--teal); outline-offset: -2px; }
+  td.team { font-weight: 700; }
+
+  .tip { position: fixed; pointer-events: none; background: var(--dark); color: #f9f9f9; padding: 7px 10px; border-radius: 6px; font-size: .8rem; max-width: 300px; z-index: 10; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+  .tip b { color: var(--teal); }
+</style>
+</head>
+<body>
+<header>
+  <div class="inner">
+    <img src="logo.png" alt="DERT logo">
+    <div>
+      <h1>DERT #2040 Match Predictor</h1>
+      <div class="sub">Schedule &amp; win chances from The Blue Alliance</div>
+    </div>
+    <nav><a href="index.html">Scouting form</a><a href="dashboard.html">Dashboard</a></nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="filters">
+    <span class="group"><span class="label">Event</span>
+      <input id="eventKey" size="10" spellcheck="false" autocapitalize="off" aria-label="TBA event key">
+      <button id="eventLoad" class="ghost">Load</button></span>
+    <span class="group"><span class="label">Team</span><select id="teamSelect" aria-label="Team"></select></span>
+    <span class="group"><span class="label">Matches</span>
+      <span class="seg" id="levelSeg"><button data-l="all" class="on">All</button><button data-l="qm">Quals</button><button data-l="po">Playoffs</button></span></span>
+    <span class="group"><span class="label">Win chance from</span><span class="seg" id="basisSeg"></span></span>
+  </div>
+  <div class="srcline">
+    <span id="srcText">Loading…</span>
+    <button id="refresh" class="ghost">Refresh</button>
+    <a id="tbaLink" target="_blank" rel="noopener">Open on TBA ↗</a>
+    <details class="live">
+      <summary>Live data (TBA API key)</summary>
+      <div class="box">
+        <input id="apiKey" type="password" placeholder="TBA Read API key" autocomplete="off" spellcheck="false">
+        <button id="keySave">Save</button><button id="keyClear" class="ghost">Remove</button>
+      </div>
+      <div>Get a free Read API key under <a href="https://www.thebluealliance.com/account" target="_blank" rel="noopener">thebluealliance.com/account</a>. It is stored only in this browser. Without a key the page uses the snapshot saved by <code>fetch-tba.ps1</code>.</div>
+    </details>
+  </div>
+  <div id="notices"></div>
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2 id="matchTitle">Matches</h2>
+    <p class="hint" id="matchHint"></p>
+    <div id="matchList"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Partners</h2>
+      <p class="hint">Teams on the same alliance, most often first. Click a team to see its matches.</p>
+      <div class="tablewrap" id="partners"></div>
+    </section>
+    <section class="card">
+      <h2>Opponents</h2>
+      <p class="hint">Teams on the other alliance, most often first.</p>
+      <div class="tablewrap" id="opponents"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Event Rankings</h2>
+    <p class="hint">From the TBA rankings page. The highlighted column drives the win chances. Click a row to select that team.</p>
+    <div class="tablewrap" id="rankings"></div>
+  </section>
+</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const DEFAULT_EVENT = "2026iltrr";   // Roboteer Rumble
+// Shown instead while the chosen event has no match schedule on TBA yet
+const FALLBACK_EVENT = "2026ilpe";
+const API = "https://www.thebluealliance.com/api/v3";
+// Win-curve slope per basis. Picked by replaying the 2026ilpe quals and predicting each one from earlier
+// results only: Avg Match called the winner 69% of the time (best slope ~0.7), rank-style measures 62-67% (~0.4).
+const SLOPE = { "Rank": 0.4, "Ranking Score": 0.4 }, DEFAULT_SLOPE = 0.7;
+const LEVEL_ORDER = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
+
+// ---------------------------------------------------------------- state
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("dertMatch." + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("dertMatch." + k, JSON.stringify(v)); } catch (e) {} },
+};
+const params = new URLSearchParams(location.search);
+const S = {
+  event: (params.get("event") || store.get("event", DEFAULT_EVENT)).toLowerCase(),
+  team: params.get("team") || store.get("team", "2040"),
+  apiKey: store.get("apiKey", ""),
+  basis: store.get("basis", "Avg Match"),
+  level: "all",
+  d: null, note: "", error: "",
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0;
+const sd = a => { const m = mean(a); return a.length > 1 ? Math.sqrt(mean(a.map(x => (x - m) ** 2))) : 0; };
+const tn = k => String(k).replace(/^frc/, "");
+const byNumber = (a, b) => parseInt(a) - parseInt(b) || String(a).localeCompare(b);
+const pct = p => p >= 0.995 ? ">99%" : p < 0.005 ? "<1%" : Math.round(p * 100) + "%";   // never claim a sure thing
+const signed = v => (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2);
+
+// ---------------------------------------------------------------- data loading
+// Both sources produce the same shape as data/tba-<event>.js (see fetch-tba.ps1).
+function loadSnapshot(key) {
+  return new Promise(resolve => {
+    if (window.TBA_EVENTS?.[key]) return resolve(TBA_EVENTS[key]);
+    const s = document.createElement("script");
+    s.src = `data/tba-${key}.js`;
+    s.onload = () => resolve(window.TBA_EVENTS?.[key] || null);
+    s.onerror = () => resolve(null);
+    document.head.append(s);
+  });
+}
+async function loadLive(key) {
+  const get = path => fetch(API + path, { headers: { "X-TBA-Auth-Key": S.apiKey } }).then(r => {
+    if (r.status === 401) throw new Error("TBA did not accept the API key");
+    if (r.status === 404) throw new Error(`TBA has no event "${key}"`);
+    if (!r.ok) throw new Error("TBA error " + r.status);
+    return r.json();
+  });
+  const [ev, teams, matches, rk] = await Promise.all(["", "/teams/simple", "/matches/simple", "/rankings"].map(p => get(`/event/${key}${p}`)));
+  const cols = (rk?.sort_order_info || []).map(s => s.name);
+  const score = a => a.score >= 0 ? a.score : null;   // TBA sends -1 until the match is played
+  return {
+    key, name: `${ev.year} ${ev.name}`, fetched: new Date().toISOString(), live: true,
+    teams: Object.fromEntries(teams.map(t => [String(t.team_number), t.nickname])),
+    rankCols: cols,
+    rankings: (rk?.rankings || []).map(r => ({
+      rank: r.rank, team: r.team_key, vals: (r.sort_orders || []).slice(0, cols.length),
+      w: r.record?.wins, l: r.record?.losses, t: r.record?.ties, dq: r.dq, played: r.matches_played,
+    })),
+    matches: matches.map(m => ({
+      key: m.key, level: m.comp_level, set: m.set_number, num: m.match_number,
+      red: m.alliances.red.team_keys, blue: m.alliances.blue.team_keys,
+      redScore: score(m.alliances.red), blueScore: score(m.alliances.blue),
+      time: m.actual_time || m.predicted_time || m.time,
+    })),
+  };
+}
+function prep(d) {
+  d.matches.forEach(m => { m.red = m.red.map(tn); m.blue = m.blue.map(tn); });
+  d.matches.sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level] || a.set - b.set || a.num - b.num);
+  d.rankings.forEach(r => r.team = tn(r.team));
+  d.rankOf = Object.fromEntries(d.rankings.map(r => [r.team, r]));
+  d.teamList = [...new Set([...Object.keys(d.teams), ...d.matches.flatMap(m => [...m.red, ...m.blue])])].sort(byNumber);
+  return d;
+}
+// Live when an API key is set, otherwise (or when TBA can't be reached) the saved snapshot
+async function getEvent(key) {
+  if (S.apiKey) {
+    try { return prep(await loadLive(key)); }
+    catch (e) { S.error = (e instanceof TypeError ? "Could not reach The Blue Alliance" : e.message) + ". Showing the saved snapshot instead."; }
+  }
+  const d = await loadSnapshot(key);
+  return d && prep(d);
+}
+async function load() {
+  S.error = ""; S.note = "";
+  $("srcText").textContent = "Loading…";
+  let d = await getEvent(S.event);
+  if (!d?.matches.length && S.event !== FALLBACK_EVENT) {
+    const fb = await getEvent(FALLBACK_EVENT);
+    if (fb?.matches.length) {
+      S.note = (d ? `${d.name} has no match schedule on The Blue Alliance yet` : `No data for ${S.event} yet (add a TBA API key under Live data, or run fetch-tba.ps1 -EventKey ${S.event})`) +
+        `, so this shows ${fb.name} (${FALLBACK_EVENT}) for now.`;
+      d = fb;
+    }
+  }
+  S.d = d;
+  render();
+}
+
+// ---------------------------------------------------------------- prediction
+function bases(d) {
+  const b = ["Avg Match", "Ranking Score"].filter(c => d.rankCols.includes(c));
+  if (!b.length && d.rankCols.length) b.push(d.rankCols[0]);
+  return [...b, "Rank"];
+}
+// Each team's value in the basis column as a z-score across the event (higher = stronger)
+function ratings(d, basis) {
+  if (!d.rankings.length) return null;
+  const i = d.rankCols.indexOf(basis);
+  const v = r => i < 0 ? -r.rank : r.vals[i];
+  const xs = d.rankings.map(v), m = mean(xs), s = sd(xs) || 1;
+  return Object.fromEntries(d.rankings.map(r => [r.team, (v(r) - m) / s]));
+}
+// Chance that `side` wins: alliance ratings added up, the gap put through a logistic curve.
+// Teams without a ranking count as event average.
+function predict(m, side, Z, basis) {
+  if (!Z) return null;
+  const sum = al => al.reduce((s, t) => s + (Z[t] ?? 0), 0);
+  const us = sum(m[side]), them = sum(m[side === "red" ? "blue" : "red"]);
+  return { p: 1 / (1 + Math.exp(-(SLOPE[basis] ?? DEFAULT_SLOPE) * (us - them))), us, them };
+}
+
+// ---------------------------------------------------------------- render
+function matchName(m, year) {
+  if (m.level === "qm") return "Q" + m.num;
+  if (m.level === "f") return "F" + m.num;
+  if (m.level === "sf" && year >= 2023) return "P" + m.set;          // double-elimination playoff match
+  return m.level.toUpperCase() + m.set + "-" + m.num;
+}
+const LEVEL_NAME = { qm: "Qual", ef: "Playoff", qf: "Playoff", sf: "Playoff", f: "Final" };
+const fmtTime = t => new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+
+function render() {
+  const d = S.d;
+  $("eventKey").value = S.event;
+  $("tbaLink").href = "https://www.thebluealliance.com/event/" + (d ? d.key : S.event);
+  $("notices").innerHTML = [S.note && `<div class="notice">${esc(S.note)}</div>`, S.error && `<div class="notice warn">⚠ ${esc(S.error)}</div>`].filter(Boolean).join("");
+  if (!d) {
+    $("srcText").textContent = "No data";
+    $("tiles").innerHTML = `<div class="tile" style="grid-column:1/-1"><div class="k">No data for ${esc(S.event)}</div><div>Add a TBA API key under <b>Live data</b>, or run <code>fetch-tba.ps1 -EventKey ${esc(S.event)}</code> to save a snapshot.</div></div>`;
+    ["teamSelect", "basisSeg", "matchList", "partners", "opponents", "rankings"].forEach(id => $(id).innerHTML = "");
+    $("matchHint").textContent = "";
+    return;
+  }
+  const when = new Date(d.fetched).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  $("srcText").innerHTML = `<b>${esc(d.name)}</b> · ` + (d.live ? `live from TBA, updated ${when}` : `saved snapshot from ${when}`);
+
+  const team = d.teamList.includes(S.team) ? S.team : (d.rankings[0]?.team || d.teamList[0] || "");
+  const basisList = bases(d), basis = basisList.includes(S.basis) ? S.basis : basisList[0];
+  $("teamSelect").innerHTML = d.teamList.map(t => `<option value="${esc(t)}" ${t === team ? "selected" : ""}>${esc(t)}${d.teams[t] ? " – " + esc(d.teams[t]) : ""}</option>`).join("");
+  $("basisSeg").innerHTML = basisList.map(b => `<button data-b="${esc(b)}" class="${b === basis ? "on" : ""}">${esc(b)}</button>`).join("");
+
+  const Z = ratings(d, basis), year = parseInt(d.key);
+  const rows = d.matches
+    .filter(m => (m.red.includes(team) || m.blue.includes(team)) && (S.level === "all" || (S.level === "qm") === (m.level === "qm")))
+    .map(m => {
+      const side = m.red.includes(team) ? "red" : "blue", other = side === "red" ? "blue" : "red";
+      const us = m[side + "Score"], them = m[other + "Score"], played = us != null && them != null;
+      return { m, side, other, us, them, played, res: played ? (us > them ? "W" : us < them ? "L" : "T") : "", pr: predict(m, side, Z, basis) };
+    });
+
+  renderTiles(d, team, rows);
+  renderMatches(d, team, rows, basis, Z, year);
+  renderPeople(d, team, rows);
+  renderRankings(d, team, basis);
+}
+
+function renderTiles(d, team, rows) {
+  const r = d.rankOf[team], done = rows.filter(x => x.played), next = rows.find(x => !x.played);
+  const count = res => done.filter(x => x.res === res).length;
+  const withP = rows.filter(x => x.pr);
+  const tiles = [
+    ["Event rank", r ? "#" + r.rank : "–", r ? `of ${d.rankings.length} teams` : "not ranked yet"],
+    ["Record", done.length ? `${count("W")}-${count("L")}-${count("T")}` : "–", `${done.length} of ${rows.length} matches played`],
+    ["Next match", next ? matchName(next.m, parseInt(d.key)) : "–",
+      next ? (next.pr ? pct(next.pr.p) + " win chance · " : "") + (next.side === "red" ? "Red" : "Blue") + " alliance" : rows.length ? "all matches played" : "no matches scheduled"],
+    ["Expected wins", withP.length ? withP.reduce((s, x) => s + x.pr.p, 0).toFixed(1) : "–",
+      withP.length ? `of ${withP.length} matches` + (done.length ? ` · actually won ${count("W")}` : "") : "needs rankings"],
+  ];
+  $("tiles").innerHTML = tiles.map(([k, v, s]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="d">${esc(s)}</div></div>`).join("");
+}
+
+function renderMatches(d, team, rows, basis, Z, year) {
+  $("matchTitle").textContent = `Matches for team ${team}` + (d.teams[team] ? ` – ${d.teams[team]}` : "");
+  $("matchHint").innerHTML = Z
+    ? `Win chance compares the two alliances on TBA's <b>${esc(basis)}</b> ranking column: each team is rated against the rest of the event, partners are added up, and the gap becomes a percentage (the tick marks 50%). Unranked teams count as average. Tested on 2026ilpe quals using only earlier results, Avg Match picked the winner about 7 times in 10 and Rank about 6 in 10. Playoffs are less predictable. Played matches use today's rankings, which already include that result.`
+    : "Win chances appear once TBA posts rankings, after the first qualification matches.";
+  const tm = (t, rank) => `<button class="tm ${t === team ? "me" : ""}" data-team="${esc(t)}" title="${esc(d.teams[t] || "")}">${esc(t)}${rank ? `<small>#${rank}</small>` : ""}</button>`;
+  const al = (m, side, label) => `<div class="side">${label} · ${side === "red" ? "Red" : "Blue"}</div>` + m[side].map(t => tm(t, d.rankOf[t]?.rank)).join("");
+  $("matchList").innerHTML = rows.map(({ m, side, other, us, them, played, res, pr }) => {
+    const status = played ? LEVEL_NAME[m.level] : m.time ? fmtTime(m.time) : "Upcoming";
+    const meter = pr
+      ? `<div class="meter" data-tip="${esc(`<b>${pct(pr.p)}</b> win chance for team ${team}<br>Our alliance ${signed(pr.us)} vs ${signed(pr.them)}<br>(${basis}, summed z-scores)`)}">
+           <div class="track"><i class="fill" style="width:${(pr.p * 100).toFixed(1)}%"></i><i class="mid"></i></div><span class="pv">${pct(pr.p)}</span></div>`
+      : `<div class="meter"><span class="na">no rankings yet</span></div>`;
+    return `<div class="mrow">
+      <div class="mname"><b>${matchName(m, year)}</b><span>${esc(status)}</span></div>
+      <div class="al ${side} with">${al(m, side, "With")}</div>
+      <div class="al ${other} against">${al(m, other, "Against")}</div>
+      ${meter}
+      <div class="res ${res}">${played ? `<span class="wl">${res}</span>${us}–${them}` : "–"}</div>
+    </div>`;
+  }).join("") || `<p class="empty">No ${S.level === "qm" ? "qualification " : S.level === "po" ? "playoff " : ""}matches for team ${esc(team)} yet.</p>`;
+}
+
+function renderPeople(d, team, rows) {
+  const table = key => {
+    const c = {};
+    rows.forEach(r => r.m[r[key]].filter(t => t !== team).forEach(t => c[t] = (c[t] || 0) + 1));
+    const list = Object.entries(c).sort((a, b) => b[1] - a[1] || (d.rankOf[a[0]]?.rank ?? 999) - (d.rankOf[b[0]]?.rank ?? 999));
+    if (!list.length) return `<p class="empty">None yet.</p>`;
+    return `<table><thead><tr><th class="l">Team</th><th class="l">Name</th><th>Rank</th><th>Matches</th></tr></thead><tbody>` +
+      list.map(([t, n]) => `<tr data-team="${esc(t)}"><td class="l team">${esc(t)}</td><td class="l name">${esc(d.teams[t] || "")}</td><td>${d.rankOf[t] ? "#" + d.rankOf[t].rank : "–"}</td><td>${n}</td></tr>`).join("") +
+      `</tbody></table>`;
+  };
+  $("partners").innerHTML = table("side");
+  $("opponents").innerHTML = table("other");
+}
+
+function renderRankings(d, team, basis) {
+  if (!d.rankings.length) { $("rankings").innerHTML = `<p class="empty">No rankings on TBA yet.</p>`; return; }
+  const rec = r => r.w == null ? "–" : `${r.w}-${r.l}-${r.t}`;
+  $("rankings").innerHTML = `<table><thead><tr><th class="${basis === "Rank" ? "basis" : ""}">Rank</th><th class="l">Team</th><th class="l">Name</th>` +
+    d.rankCols.map(c => `<th class="${c === basis ? "basis" : ""}">${esc(c)}</th>`).join("") + `<th>Record</th><th>Played</th></tr></thead><tbody>` +
+    d.rankings.map(r => `<tr data-team="${esc(r.team)}" class="${r.team === team ? "sel" : ""}"><td>${r.rank}</td><td class="l team">${esc(r.team)}</td><td class="l name">${esc(d.teams[r.team] || "")}</td>` +
+      r.vals.map(v => `<td>${v == null ? "–" : +v.toFixed(2)}</td>`).join("") + `<td>${rec(r)}</td><td>${r.played ?? "–"}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+// ---------------------------------------------------------------- events
+function selectTeam(t) {
+  S.team = t; store.set("team", t);
+  history.replaceState(null, "", `?event=${encodeURIComponent(S.event)}&team=${encodeURIComponent(t)}`);
+  render();
+}
+function loadEventFromInput() {
+  const key = $("eventKey").value.trim().toLowerCase();
+  if (!/^\d{4}[a-z0-9]+$/.test(key)) { S.error = `"${key}" is not a TBA event key (like 2026iltrr).`; render(); return; }
+  S.event = key; store.set("event", key);
+  history.replaceState(null, "", `?event=${encodeURIComponent(key)}`);
+  load();
+}
+$("eventLoad").onclick = loadEventFromInput;
+$("eventKey").onkeydown = e => { if (e.key === "Enter") loadEventFromInput(); };
+$("teamSelect").onchange = e => selectTeam(e.target.value);
+$("levelSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.level = b.dataset.l; [...$("levelSeg").children].forEach(x => x.classList.toggle("on", x === b)); render(); };
+$("basisSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; S.basis = b.dataset.b; store.set("basis", S.basis); render(); };
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-team]"); if (!t) return;
+  selectTeam(t.dataset.team);
+  if (t.closest("#partners, #opponents, #rankings")) $("matchTitle").scrollIntoView({ behavior: "smooth" });
+});
+$("refresh").onclick = load;
+$("apiKey").value = S.apiKey;
+$("keySave").onclick = () => { S.apiKey = $("apiKey").value.trim(); store.set("apiKey", S.apiKey); load(); };
+$("keyClear").onclick = () => { S.apiKey = ""; $("apiKey").value = ""; store.set("apiKey", ""); load(); };
+// Keep live data fresh while the page is open at the event
+setInterval(() => { if (S.d?.live && !document.hidden) load(); }, 3 * 60 * 1000);
+
+// shared tooltip
+const tip = $("tip");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest && e.target.closest("[data-tip]");
+  if (!t) { tip.hidden = true; return; }
+  tip.innerHTML = t.dataset.tip; tip.hidden = false;
+  const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+  tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px";
+});
+
+load();
+</script>
+</body>
+</html>
