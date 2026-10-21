@@ -141,17 +141,25 @@ $chk = 0; foreach ($m in $d) { for ($s = 0; $s -lt 2; $s++) {
 "2040 OPR teleop $([Math]::Round($oprTele['2040'],1)) auto $([Math]::Round($oprAuto['2040'],1))"
 
 # ---------- write into the workbook ----------
-$nCols = $rows[0].Count
-$arr = New-Object 'object[,]' $rows.Count, $nCols
-for ($r = 0; $r -lt $rows.Count; $r++) { for ($c = 0; $c -lt $nCols; $c++) {
-  $v = $rows[$r][$c]; if ($v -is [string] -and $v -eq "") { $v = $null }
-  $arr[$r, $c] = $v } }
+# Same stamp index.html puts in column A: "S<columns after it>-<FNV-1a hash of their headers>"
+function Fnv1a([string]$s) {
+  [uint64]$h = 2166136261
+  foreach ($b in [Text.Encoding]::UTF8.GetBytes($s)) { $h = (($h -bxor $b) * [uint64]16777619) -band [uint64]4294967295 }
+  '{0:x8}' -f $h
+}
 
 $x = New-Object -ComObject Excel.Application
 $x.Visible = $false; $x.DisplayAlerts = $false
 try {
   $wb = $x.Workbooks.Open($Workbook)
   $ws = $wb.Worksheets.Item("Scans"); $lo = $ws.ListObjects.Item("Scans")
+  $hdr = @($lo.HeaderRowRange.Value2 | ForEach-Object { "$_" })
+  $lead = @(); if ($hdr[0] -eq "Schema") { $lead = @("S$($hdr.Count - 1)-$(Fnv1a ($hdr[1..($hdr.Count - 1)] -join "`t"))") }
+  $nCols = $lead.Count + $rows[0].Count
+  $arr = New-Object 'object[,]' $rows.Count, $nCols
+  for ($r = 0; $r -lt $rows.Count; $r++) { $row = $lead + $rows[$r]; for ($c = 0; $c -lt $nCols; $c++) {
+    $v = $row[$c]; if ($v -is [string] -and $v -eq "") { $v = $null }
+    $arr[$r, $c] = $v } }
   if ($lo.DataBodyRange -ne $null) { $lo.DataBodyRange.ClearContents() | Out-Null }
   $lastCol = ($ws.Cells.Item(1, $nCols).Address($false, $false)) -replace '\d', ''
   $lo.Resize($ws.Range("A1:$lastCol$($rows.Count + 1)"))

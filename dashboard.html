@@ -122,6 +122,8 @@
   .empty { color: var(--muted); padding: 20px 0; text-align: center; }
   details summary { cursor: pointer; color: var(--teal-ink); font-size: .82rem; margin-top: 6px; }
   .drop { outline: 3px dashed var(--teal); outline-offset: -8px; }
+  .notice { background: var(--surface); border: 1px solid var(--bad); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: .88rem; }
+  .notice b { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -157,6 +159,7 @@
     <input type="search" id="ourTeam" value="2040" style="width:80px">
   </div>
 
+  <div class="notice" id="notice" hidden></div>
   <div class="tiles" id="tiles"></div>
 
   <section class="card">
@@ -240,11 +243,52 @@ const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0;
 const sd = a => { const m = mean(a); return a.length > 1 ? Math.sqrt(mean(a.map(x => (x - m) ** 2))) : 0; };
 const list = v => String(v || "").split(";").map(s => s.trim()).filter(Boolean);
 
+// ---------------------------------------------------------------- schema check
+// index.html puts a stamp "S<n>-<hash>" in the first QR column: n = how many columns follow it, hash = FNV-1a
+// of their headers. A row only lines up with this sheet if the n headers after the Schema column hash the same.
+const SCHEMA_COL = "Schema", STAMP = /^S(\d+)-([0-9a-f]{8})$/;
+const fnv1a = s => {
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(s)) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, "0");
+};
+function checkSchema(headers, rows) {
+  const si = headers.indexOf(SCHEMA_COL), fits = {};
+  const linesUp = stamp => {
+    const m = STAMP.exec(String(stamp));
+    return !!m && (fits[stamp] ??= fnv1a(headers.slice(si + 1, si + 1 + Number(m[1])).join("\t")) === m[2]);
+  };
+  const good = [], bad = [];
+  rows.forEach((r, i) => {
+    if (!r.some(v => v !== "" && v != null)) return;
+    // No Schema column (older workbook, sample data): only a stamp in column A gives away a row that is one column off
+    const ok = si < 0 ? !STAMP.test(String(r[0])) : linesUp(r[si]);
+    if (ok) good.push(r); else bad.push(i + 2);   // i + 2 = Excel row number (row 1 holds the headers)
+  });
+  return { good, bad, hasSchema: si >= 0 };
+}
+function renderNotice({ bad, hasSchema }) {
+  const n = bad.length;
+  $("notice").hidden = !n;
+  if (!n) return;
+  const where = (n > 1 ? "Excel rows " : "Excel row ") + bad.slice(0, 12).join(", ") + (n > 12 ? "…" : "");
+  if (hasSchema) {
+    $("notice").innerHTML = `<b>⚠ ${n} scan(s) left out</b> (${where}): made with a different version of the scouting form, ` +
+      "so the answers are in the wrong columns. Update the app on that phone (open it once on Wi-Fi), delete the row(s) and scan those matches again.";
+  } else {
+    $("notice").innerHTML = `<b>⚠ This workbook is older than the scouting form.</b> ${n} scan(s) (${where}) are one column off and were left out. ` +
+      "Start a new copy of DERT_Scouting_REBUILT.xlsx (its first column is Schema) and scan them into it: scouts can show old QR codes again under Submitted matches.";
+  }
+}
+
 // ---------------------------------------------------------------- data loading
 function setData(headers, rows, name) {
+  $("notice").hidden = true;
   const missing = [C.team, C.match].filter(h => !headers.includes(h));
   if (missing.length) { alertBox("This file has no '" + missing.join("', '") + "' column. Use the Scans sheet from the DERT workbook."); return; }
-  S.raw = rows.filter(r => r.some(v => v !== "" && v != null)).map(r => {
+  const schema = checkSchema(headers, rows);
+  renderNotice(schema);
+  S.raw = schema.good.map(r => {
     const o = {}; headers.forEach((h, i) => o[h] = r[i] ?? "");
     // fill points if the sheet has no points columns
     if (o[C.total] === "" || o[C.total] == null) {

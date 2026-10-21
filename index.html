@@ -113,6 +113,16 @@
   .summary b { color: var(--text); font-weight: 500; }
   details { text-align: left; margin-top: 8px; font-size: .85rem; }
   details pre { white-space: pre-wrap; word-break: break-all; background: var(--light); padding: 8px; border-radius: 6px; }
+  .saved { font-size: .85rem; font-weight: 500; color: var(--teal-dark); margin: 0 0 12px; }
+
+  /* Submitted matches */
+  #history .hint { margin: 0 0 12px; }
+  .hist {
+    display: block; width: 100%; text-align: left; padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+    background: var(--light); border: 1px solid var(--border); border-radius: 6px; font: inherit; color: var(--text);
+  }
+  .hist b { display: block; font-weight: 500; }
+  .hist span { font-size: .85rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -134,20 +144,31 @@
     <div id="error" class="error" hidden></div>
     <button type="submit" class="btn">Submit &amp; show QR</button>
     <button type="button" class="btn secondary" id="clear">Clear form</button>
+    <button type="button" class="btn secondary" id="showHistory">Submitted matches</button>
   </form>
 
   <div id="result" class="card" hidden>
     <h2>Scan me</h2>
     <div id="qr"></div>
+    <p class="saved" id="savedNote"></p>
     <p class="summary" id="summary"></p>
     <button type="button" class="btn" id="next">Next match</button>
     <button type="button" class="btn secondary" id="edit">Back to edit</button>
+    <button type="button" class="btn" id="backToList" hidden>Back to list</button>
     <details>
       <summary>Excel column headers</summary>
       <p>Paste this as row 1 in your Excel sheet (once per event).</p>
       <pre id="headers"></pre>
       <button type="button" class="btn secondary" id="copyHeaders">Copy headers</button>
     </details>
+  </div>
+
+  <div id="history" class="card" hidden>
+    <h2>Submitted matches <small id="historyCount"></small></h2>
+    <p class="hint">Saved on this phone. Tap a match to show its QR code again.</p>
+    <div id="historyList"></div>
+    <button type="button" class="btn" id="historyBack">Back to form</button>
+    <button type="button" class="btn secondary" id="historyClear">Clear list</button>
   </div>
 </div>
 
@@ -334,15 +355,89 @@
     save();
   });
 
+  // Schema stamp = first QR column: "S<number of columns after it>-<FNV-1a hash of their headers>".
+  // It changes by itself when a field is added, removed or renamed, so Excel and the dashboard can spot
+  // a scan whose columns don't line up with the workbook. build-excel.ps1 and dashboard.html use the same hash.
+  const SCHEMA_COL = "Schema";
+  const HEADERS = [...FIELDS.map(f => f.col || f.label), "Auto pts", "Teleop fuel pts", "Climb pts", "Total pts", "Submitted"];
+  const fnv1a = s => {
+    let h = 0x811c9dc5;
+    for (const b of new TextEncoder().encode(s)) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+    return h.toString(16).padStart(8, "0");
+  };
+  const SCHEMA = `S${HEADERS.length}-${fnv1a(HEADERS.join("\t"))}`;
+
   // Tabs/newlines would break the Excel row, so flatten them
   const clean = s => String(s).replace(/[\t\r\n]+/g, " ").trim();
 
   function columns() {
     const p = points();
-    const cols = FIELDS.map(f => [f.col || f.label, clean(Array.isArray(data[f.id]) ? data[f.id].join("; ") : data[f.id])]);
-    cols.push(["Auto pts", p.auto], ["Teleop fuel pts", p.tele], ["Climb pts", p.climb], ["Total pts", p.total],
-              ["Submitted", new Date().toLocaleString()]);
-    return cols;
+    const vals = [...FIELDS.map(f => clean(Array.isArray(data[f.id]) ? data[f.id].join("; ") : data[f.id])),
+                  p.auto, p.tele, p.climb, p.total, new Date().toLocaleString()];   // same order as HEADERS
+    return [[SCHEMA_COL, SCHEMA], ...HEADERS.map((h, i) => [h, vals[i]])];
+  }
+
+  // ---------- submitted matches: kept on the phone so a QR code can be shown again ----------
+  const HISTORY_KEY = "dertScoutHistory", HISTORY_MAX = 200;
+  let editingKey = null;   // the submitted match that "Back to edit" is fixing
+
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch (e) { return []; }
+  }
+
+  // Newest first. Submitting the same match + team again (or the match being edited) replaces it.
+  function remember(cols) {
+    const info = Object.fromEntries(["matchType", "match", "team", "alliance", "station", "scout"].map(k => [k, data[k]]));
+    const key = [info.matchType, info.match, info.team].join("|");
+    const entry = { key, at: Date.now(), info, cols };
+    const list = [entry, ...loadHistory().filter(x => x.key !== key && x.key !== editingKey)].slice(0, HISTORY_MAX);
+    let saved = true;
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch (e) { saved = false; }
+    editingKey = key;
+    return { ...entry, saved };
+  }
+
+  const when = t => new Date(t).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const show = id => { ["form", "result", "history"].forEach(v => $(v).hidden = v !== id); window.scrollTo(0, 0); };
+
+  function showQr(entry, replay) {
+    // Tab-separated: a scanner in keyboard mode types each value into the next Excel cell,
+    // and the trailing newline (Enter) moves to the next row.
+    const payload = entry.cols.map(c => c[1]).join("\t") + "\n";
+
+    qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
+    const qr = qrcode(0, "L");
+    qr.addData(payload, "Byte");
+    qr.make();
+    $("qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
+
+    const i = entry.info;
+    $("summary").innerHTML = `<b>Match ${esc(i.match)} · Team ${esc(i.team)} · ${esc(i.alliance)} ${esc(i.station)}</b><br>` +
+      // skip Schema and the six pre-match columns shown in bold
+      entry.cols.slice(7).filter(c => c[1] !== "" && c[1] !== 0).map(c => `${esc(c[0])}: ${esc(c[1])}`).join(" | ");
+    $("headers").textContent = entry.cols.map(c => c[0]).join("\t");
+
+    let note = "✓ Saved on this phone. You can show it again from Submitted matches.";
+    if (replay) note = `Submitted ${when(entry.at)}. Only show it again if it wasn't scanned.`;
+    else if (!entry.saved) note = "⚠ Couldn't save this on the phone. Make sure it gets scanned now.";
+    $("savedNote").textContent = note;
+    $("next").hidden = $("edit").hidden = replay;
+    $("backToList").hidden = !replay;
+    show("result");
+  }
+
+  function renderHistory() {
+    const list = loadHistory();
+    $("historyCount").textContent = list.length ? `${list.length} saved` : "";
+    $("historyList").innerHTML = list.length ? list.map((x, n) =>
+      `<button type="button" class="hist" data-n="${n}"><b>${esc(x.info.matchType)} ${esc(x.info.match)} · Team ${esc(x.info.team)}</b>` +
+      `<span>${esc(x.info.alliance)} ${esc(x.info.station)} · ${esc(x.info.scout)} · ${esc(when(x.at))}</span></button>`).join("")
+      : `<p class="hint">Nothing submitted on this phone yet.</p>`;
+  }
+
+  function updateHistoryButton() {
+    const n = loadHistory().length;
+    $("showHistory").textContent = "Submitted matches" + (n ? ` (${n})` : "");
   }
 
   $("form").addEventListener("submit", e => {
@@ -356,25 +451,8 @@
       return;
     }
     $("error").hidden = true;
-
-    // Tab-separated: a scanner in keyboard mode types each value into the next Excel cell,
-    // and the trailing newline (Enter) moves to the next row.
-    const cols = columns();
-    const payload = cols.map(c => c[1]).join("\t") + "\n";
-
-    qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
-    const qr = qrcode(0, "L");
-    qr.addData(payload, "Byte");
-    qr.make();
-    $("qr").innerHTML = qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
-
-    $("summary").innerHTML = `<b>Match ${esc(data.match)} · Team ${esc(data.team)} · ${esc(data.alliance)} ${esc(data.station)}</b><br>` +
-      cols.slice(6).filter(c => c[1] !== "" && c[1] !== 0).map(c => `${esc(c[0])}: ${esc(c[1])}`).join(" | ");
-    $("headers").textContent = cols.map(c => c[0]).join("\t");
-
-    $("form").hidden = true;
-    $("result").hidden = false;
-    window.scrollTo(0, 0);
+    showQr(remember(columns()), false);
+    updateHistoryButton();
   });
 
   // Next match: keep scout/alliance/station, bump match number, clear the rest
@@ -382,29 +460,39 @@
     const nextMatch = (parseInt(data.match, 10) || 0) + 1;
     data = defaults(data);
     data.match = String(nextMatch);
+    editingKey = null;
     save(); render();
-    $("result").hidden = true;
-    $("form").hidden = false;
+    show("form");
+  });
+
+  $("edit").addEventListener("click", () => show("form"));
+
+  $("showHistory").addEventListener("click", () => { renderHistory(); show("history"); });
+  $("backToList").addEventListener("click", () => { renderHistory(); show("history"); });
+  $("historyBack").addEventListener("click", () => show("form"));
+  $("historyList").addEventListener("click", e => {
+    const b = e.target.closest("button[data-n]");
+    if (b) showQr(loadHistory()[b.dataset.n], true);
+  });
+
+  // Two taps to confirm, so a stray tap doesn't wipe anything
+  function twoTap(b, confirmText, action) {
+    const label = b.textContent;
+    b.addEventListener("click", () => {
+      if (b.dataset.armed) { delete b.dataset.armed; b.textContent = label; action(); return; }
+      b.dataset.armed = "1"; b.textContent = confirmText;
+      setTimeout(() => { delete b.dataset.armed; b.textContent = label; }, 3000);
+    });
+  }
+  twoTap($("clear"), "Tap again to clear", () => {
+    data = defaults(data);
+    editingKey = null;
+    save(); render();
     window.scrollTo(0, 0);
   });
-
-  $("edit").addEventListener("click", () => {
-    $("result").hidden = true;
-    $("form").hidden = false;
-  });
-
-  // Two taps to clear, so a stray tap doesn't wipe a match
-  $("clear").addEventListener("click", e => {
-    const b = e.target;
-    if (b.dataset.armed) {
-      data = defaults(data);
-      save(); render();
-      window.scrollTo(0, 0);
-      delete b.dataset.armed; b.textContent = "Clear form";
-    } else {
-      b.dataset.armed = "1"; b.textContent = "Tap again to clear";
-      setTimeout(() => { delete b.dataset.armed; b.textContent = "Clear form"; }, 3000);
-    }
+  twoTap($("historyClear"), "Tap again to clear the list", () => {
+    try { localStorage.removeItem(HISTORY_KEY); } catch (e) {}
+    renderHistory(); updateHistoryButton();
   });
 
   $("copyHeaders").addEventListener("click", e => {
@@ -415,6 +503,7 @@
 
   load();
   render();
+  updateHistoryButton();
 </script>
 </body>
 </html>

@@ -1,9 +1,9 @@
 ﻿param([string]$Out = "D:\JD Projects\DERT\QRCodeTest\DERT_Scouting_REBUILT.xlsx", [switch]$Test)
 $ErrorActionPreference = "Stop"
 
-# Must match the column order produced by index.html (FIELDS + computed columns)
+# Must match the column order produced by index.html (Schema stamp + FIELDS + computed columns)
 $headers = @(
-  "Match type","Match #","Team #","Alliance","Station","Scout name","Robot on field?","Starting position","Fuel preloaded",
+  "Schema","Match type","Match #","Team #","Alliance","Station","Scout name","Robot on field?","Starting position","Fuel preloaded",
   "Auto fuel scored","Auto fuel missed","Auto path","Picked up fuel from","Tower climb in auto",
   "Teleop fuel scored","Teleop fuel missed","Intake from","Shoots from","Drives over / through","Inactive Hub behavior",
   "Fuel it can carry","Played defense","Was defended","Tower climb","Climb time",
@@ -11,6 +11,14 @@ $headers = @(
   "Auto pts","Teleop fuel pts","Climb pts","Total pts","Submitted"
 )
 $n = $headers.Count
+
+# Stamp the web app puts in column A: "S<columns after it>-<FNV-1a hash of their headers>" (same as index.html)
+function Fnv1a([string]$s) {
+  [uint64]$h = 2166136261
+  foreach ($b in [Text.Encoding]::UTF8.GetBytes($s)) { $h = (($h -bxor $b) * [uint64]16777619) -band [uint64]4294967295 }
+  '{0:x8}' -f $h
+}
+$schema = "S$($n - 1)-$(Fnv1a ($headers[1..($n - 1)] -join "`t"))"
 
 function RGB($r,$g,$b) { $r + 256*$g + 65536*$b }
 $TEAL = RGB 18 180 175; $DARK = RGB 28 28 28; $LIGHT = RGB 249 249 249; $YELLOW = RGB 255 242 153; $WHITE = RGB 255 255 255
@@ -47,7 +55,7 @@ try {
   $lo.TableStyle = "TableStyleLight1"
   HeaderStyle $lo.HeaderRowRange
   $scan.Rows.Item(1).RowHeight = 42
-  $widths = @{ "Scout name"=14; "Auto path"=30; "Picked up fuel from"=22; "Intake from"=30; "Shoots from"=26; "Inactive Hub behavior"=30;
+  $widths = @{ "Schema"=13; "Scout name"=14; "Auto path"=30; "Picked up fuel from"=22; "Intake from"=30; "Shoots from"=26; "Inactive Hub behavior"=30;
                "Problems"=24; "Observations"=50; "Submitted"=20; "Drives over / through"=14; "Starting position"=11 }
   for ($i = 0; $i -lt $n; $i++) {
     $w = 10; if ($widths.ContainsKey($headers[$i])) { $w = $widths[$headers[$i]] }
@@ -59,8 +67,12 @@ try {
     $lo.ListColumns.Item($h).DataBodyRange.EntireColumn.Font.Bold = $true
   }
   HeaderStyle $lo.HeaderRowRange
-  $scan.Activate(); $x.ActiveWindow.SplitRow = 1; $x.ActiveWindow.SplitColumn = 3; $x.ActiveWindow.FreezePanes = $true
+  $scan.Activate(); $x.ActiveWindow.SplitRow = 1; $x.ActiveWindow.SplitColumn = 4; $x.ActiveWindow.FreezePanes = $true
   $scan.Range("A2").Select()
+  # A row whose stamp doesn't match these headers came from another version of the web form: show it red.
+  # No functions or argument separators in the formula, so it works in any Excel language.
+  $fc = $scan.Range("A2:$($lastColLetter)5000").FormatConditions.Add(2, [Type]::Missing, "=(`$A2<>`"`")*(`$A2<>`"$schema`")")
+  $fc.Interior.Color = RGB 255 199 206; $fc.Font.Color = RGB 156 0 6
 
   # ---------------- Team Summary ----------------
   Title $sum "DERT #2040 - REBUILT Team Summary" "Updates automatically from the Scans sheet. One row per team, sorted by team number. Rank 1 = highest average total points." "R"
@@ -144,7 +156,7 @@ try {
     @("2","Use a USB/Bluetooth QR scanner in keyboard mode (most scanners default to this). Set its keyboard language to match Windows."),
     @("3","Test: open Notepad and scan a code - you should see values separated by tabs and the cursor should jump to a new line at the end."),
     @("h","IMPORTING MATCHES"),
-    @("1","Go to the Scans sheet and click the first EMPTY cell in column A (Match type)."),
+    @("1","Go to the Scans sheet and click the first EMPTY cell in column A (Schema)."),
     @("2","Scan the student's QR code. The whole match fills one row and the cursor moves to the next row automatically."),
     @("3","Repeat for every QR code. Keep scanning - the table grows by itself."),
     @("4","Made a mistake? Delete the whole row (right-click row number > Delete) and scan again."),
@@ -157,9 +169,12 @@ try {
     @("-","Points: fuel in active Hub = 1 pt. Tower Level 1 = 15 pts in auto / 10 pts in teleop, Level 2 = 20, Level 3 = 30 (2026 REBUILT Game Manual, Table 6-4)."),
     @("-","Ratings (Driver skill, Robot speed, Shooting accuracy) are 1 = poor to 5 = great. Multi-choice answers are separated by '; '."),
     @("-","Requires Microsoft 365 / Excel 2021 or newer (uses UNIQUE, SORTBY, FILTER, HSTACK)."),
+    @("-","Schema (column A) is filled in by every QR code ($schema for this workbook). A RED row came from a different version"),
+    @("", "   of the scouting form, so its answers are in the wrong columns: delete it, update the app on that phone (open it on Wi-Fi), scan again."),
     @("h","IF YOU CHANGE THE WEB FORM"),
-    @("-","Adding, removing or re-ordering fields in index.html changes the QR columns. Update the Scans headers to match"),
-    @("", "   (the web app's QR screen has an 'Excel column headers' section you can copy), and check the Team Summary formulas."),
+    @("-","Adding, removing or renaming fields in index.html changes the QR columns and the Schema stamp. Update the header list in"),
+    @("", "   build-excel.ps1 to match (the web app's QR screen has an 'Excel column headers' section you can copy) and rebuild this workbook,"),
+    @("", "   otherwise every new scan shows up red. Check the Team Summary formulas too."),
     @("h","EXAMPLE ROW (what one scanned match looks like)")
   )
   $r = 4
@@ -172,7 +187,7 @@ try {
     }
     $r++
   }
-  $example = @("Qual",12,2040,"Blue",2,"Alex",'Yes',"Center",8,8,2,"Left start line; Went to Neutral Zone","Depot","Level 1",
+  $example = @($schema,"Qual",12,2040,"Blue",2,"Alex",'Yes',"Center",8,8,2,"Left start line; Went to Neutral Zone","Depot","Level 1",
                47,9,"Neutral Zone floor; Depot","Close to Hub; Mid range","Bump","Collects / stockpiles","26–40","None","Some",
                "Level 3","5–10 s",4,4,4,"",0,0,"None","Yes","Fast shooter, very consistent climb",23,47,30,100,"10/6/2026, 3:45:12 PM")
   $exStart = $r
@@ -185,9 +200,9 @@ try {
   if ($Test) {
     # Fill test data to verify formulas
     $rows = @(
-      @("Qual",1,2040,"Blue",1,"A","Yes","Left",8,8,2,"","Depot","Level 1",40,10,"Depot","Close to Hub","Bump","","26–40","None","No","Level 3","5–10 s",4,4,4,"",0,0,"None","Yes","",23,40,30,93,"x"),
-      @("Qual",5,2040,"Blue",2,"B","Yes","Left",8,6,0,"","","None",30,10,"","","","","26–40","Some","No","Level 2","5–10 s",2,4,4,"Fuel jam",1,1,"None","Maybe","",6,30,20,56,"x"),
-      @("Qual",2,111,"Red",3,"C","Yes","Left",8,2,2,"","","None",10,10,"","","","","1–10","None","No","None","",3,3,3,"",0,0,"None","No","",2,10,0,12,"x")
+      @($schema,"Qual",1,2040,"Blue",1,"A","Yes","Left",8,8,2,"","Depot","Level 1",40,10,"Depot","Close to Hub","Bump","","26–40","None","No","Level 3","5–10 s",4,4,4,"",0,0,"None","Yes","",23,40,30,93,"x"),
+      @($schema,"Qual",5,2040,"Blue",2,"B","Yes","Left",8,6,0,"","","None",30,10,"","","","","26–40","Some","No","Level 2","5–10 s",2,4,4,"Fuel jam",1,1,"None","Maybe","",6,30,20,56,"x"),
+      @($schema,"Qual",2,111,"Red",3,"C","Yes","Left",8,2,2,"","","None",10,10,"","","","","1–10","None","No","None","",3,3,3,"",0,0,"None","No","",2,10,0,12,"x")
     )
     for ($ri = 0; $ri -lt $rows.Count; $ri++) {
       for ($ci = 0; $ci -lt $n; $ci++) {
@@ -201,7 +216,7 @@ try {
     for ($rr = 5; $rr -le 6; $rr++) { ($sum.Range("A$($rr):R$($rr)").Value2 | ForEach-Object { $_ }) -join " | " }
     "Pick list:"
     for ($rr = 5; $rr -le 6; $rr++) { ($sum.Range("T$($rr):AC$($rr)").Value2 | ForEach-Object { $_ }) -join " | " }
-    "Lookup: " + $look.Range("C3").Text + " / " + $look.Range("D3").Text + " / first match col B: " + $look.Range("B6").Text + ", " + $look.Range("B7").Text + " / A8: " + $look.Range("A8").Text
+    "Lookup: " + $look.Range("C3").Text + " / " + $look.Range("D3").Text + " / Match # col C: " + $look.Range("C6").Text + ", " + $look.Range("C7").Text + " / A8: " + $look.Range("A8").Text
     "Table rows: " + $lo.ListRows.Count
   }
 
