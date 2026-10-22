@@ -124,6 +124,31 @@
   .drop { outline: 3px dashed var(--teal); outline-offset: -8px; }
   .notice { background: var(--surface); border: 1px solid var(--bad); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: .88rem; }
   .notice b { color: var(--bad); }
+
+  /* card header with controls on the right */
+  .card-head { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .card-head h2 { margin: 0; }
+  .card-head .ctl { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--text-2); }
+  .card-head select, .card-head input { padding: 4px 8px; font-size: .82rem; }
+  .card-head input { width: 96px; font: inherit; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .card-head button { padding: 4px 10px; font-size: .8rem; }
+
+  /* scouting check */
+  .chip.ok { color: var(--good); } .chip.warn { color: var(--bad); font-weight: 500; }
+  .issues { margin: 4px 0 8px; padding-left: 18px; font-size: .85rem; }
+  .issues li { margin: 2px 0; }
+  .issues .m { font-weight: 500; }
+  #checkBody table { width: auto; font-size: .85rem; }
+
+  /* alliance builder + sleepers */
+  .ally-slots { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .ally-slots label { display: flex; flex-direction: column; gap: 2px; font-size: .78rem; color: var(--text-2); }
+  .ally-slots select { min-width: 140px; }
+  .mini .d { font-size: .75rem; color: var(--muted); }
+  .mini .d.warn { color: var(--bad); font-weight: 500; }
+  .scroll { max-height: 400px; overflow: auto; }
+  .add { padding: 2px 10px; font-size: .75rem; }
+  .clash { color: var(--bad); }
 </style>
 </head>
 <body>
@@ -163,6 +188,16 @@
   <div class="tiles" id="tiles"></div>
 
   <section class="card">
+    <div class="card-head">
+      <h2>Scouting Check</h2>
+      <span class="ctl">TBA event <input id="tbaEvent" spellcheck="false" autocapitalize="off" aria-label="TBA event key"><button class="ghost" id="tbaLoad">Load</button></span>
+    </div>
+    <p class="hint" id="checkSrc"></p>
+    <div class="chips" id="checkChips"></div>
+    <details id="checkDetails"><summary id="checkSum">Show details</summary><div id="checkBody"></div></details>
+  </section>
+
+  <section class="card">
     <h2>Pick List</h2>
     <p class="hint">Score 0–100 = weighted mix of each team's stats, each scaled from worst (0) to best (100) at this event. Drag the sliders to match your strategy. Click a row for details; ✓ marks a team as picked, ✕ as do-not-pick (saved in this browser).</p>
     <div class="presets" id="presets"></div>
@@ -173,9 +208,29 @@
   <div class="grid2">
     <section class="card" id="detailCard"></section>
     <section class="card">
-      <h2>Auto vs Teleop</h2>
-      <p class="hint">Each dot is a team: average auto points (→) vs average teleop fuel (↑). Top-right = scores in both. Click a dot to open the team.</p>
+      <div class="card-head">
+        <h2>Team Scatter</h2>
+        <span class="ctl">X <select id="sx" aria-label="X axis"></select> Y <select id="sy" aria-label="Y axis"></select></span>
+      </div>
+      <p class="hint">Each dot is a team; pick any two stats. The grey lines are the event average, so top-right = above average in both. Click a dot to open the team.</p>
       <div id="scatter"></div>
+    </section>
+  </div>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>Points by Phase</h2>
+      <p class="hint">Average points per match for every team, split by phase and sorted by total. The grey line is the event average. Click a bar to open the team.</p>
+      <div class="legend"><span style="--c:var(--s1)">Auto</span><span style="--c:var(--s2)">Teleop fuel</span><span style="--c:var(--s3)">Climb</span><span style="--c:var(--muted)">| event avg</span></div>
+      <div id="phases"></div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <h2>Consistency</h2>
+        <span class="ctl"><select id="boxMetric" aria-label="Stat"></select></span>
+      </div>
+      <p class="hint">How much a team's score changes from match to match. Box = the middle half of its matches, black line = median, whiskers = worst and best match, dots = single matches. A short box means a steady robot.</p>
+      <div id="boxes"></div>
     </section>
   </div>
 
@@ -185,13 +240,28 @@
     <div class="compare-pick" id="comparePick"></div>
     <div id="compare"></div>
   </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Alliance Builder</h2>
+      <span class="ctl"><button class="ghost" id="allyClear">Start over</button></span>
+    </div>
+    <p class="hint">Put our alliance together and see how it would do. Expected score = the three teams' average points added up. Win chances assume each team scores like it has so far, so a team whose score jumps around makes the result less certain. Teams marked ✓ (picked by another alliance) aren't suggested; ⚠ next to a start position means a partner usually starts there too.</p>
+    <div id="builder"></div>
+  </section>
+
+  <section class="card">
+    <h2>Sleeper Picks</h2>
+    <p class="hint">TBA rank (→) vs our pick-list rank (↓). Teams in the shaded corner rank lower in the standings than they scout, often because they had weak partners, so they may still be free late in alliance selection. Click a dot or row to open the team.</p>
+    <div class="grid2"><div id="sleeperChart"></div><div id="sleeperTable"></div></div>
+  </section>
 </div>
 <div class="tip" id="tip" hidden></div>
 
 <script>
 // ---------------------------------------------------------------- columns (must match index.html / Excel headers)
 const C = {
-  type: "Match type", match: "Match #", team: "Team #", alliance: "Alliance", scout: "Scout name", onField: "Robot on field?",
+  type: "Match type", match: "Match #", team: "Team #", alliance: "Alliance", scout: "Scout name", onField: "Robot on field?", start: "Starting position",
   autoFuel: "Auto fuel scored", autoMiss: "Auto fuel missed", autoClimb: "Tower climb in auto",
   teleFuel: "Teleop fuel scored", teleMiss: "Teleop fuel missed", intake: "Intake from", shoot: "Shoots from",
   terrain: "Drives over / through", inactive: "Inactive Hub behavior", capacity: "Fuel it can carry",
@@ -220,6 +290,26 @@ const PRESETS = {
   "Defender": { tele: 1, auto: 1, climb: 2, acc: 0, cons: 2, rel: 6, driver: 6, def: 10, fouls: 5 },
 };
 
+// Team stats the scatter can put on an axis. max = fixed axis end (percentages, 1-5 ratings, score)
+const STATS = {
+  total:     { label: "Avg total pts",   f: v => v.toFixed(1) },
+  auto:      { label: "Avg auto pts",    f: v => v.toFixed(1) },
+  tele:      { label: "Avg teleop fuel", f: v => v.toFixed(1) },
+  climb:     { label: "Avg climb pts",   f: v => v.toFixed(1) },
+  best:      { label: "Best match",      f: v => v.toFixed(0) },
+  score:     { label: "Pick score",      f: v => v.toFixed(0), max: 100 },
+  acc:       { label: "Shot accuracy",   f: v => pct(v), max: 1 },
+  cons:      { label: "Consistency",     f: v => pct(v), max: 1 },
+  rel:       { label: "Reliability",     f: v => pct(v), max: 1 },
+  climbRate: { label: "Climb rate",      f: v => pct(v), max: 1 },
+  def:       { label: "Defense",         f: v => pct(v), max: 1 },
+  driver:    { label: "Driver skill",    f: v => v.toFixed(1), max: 5 },
+  fouls:     { label: "Fouls per match", f: v => v.toFixed(2) },
+};
+// Per-match columns the consistency chart can show
+const PER_MATCH = { total: ["Total pts", C.total], auto: ["Auto pts", C.autoPts], tele: ["Teleop fuel", C.telePts], climb: ["Climb pts", C.climbPts] };
+const SAMPLE_EVENT = "2026ilpe", DEFAULT_EVENT = "2026iltrr";
+
 // ---------------------------------------------------------------- state
 const store = {
   get(k, d) { try { const v = localStorage.getItem("dertDash." + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
@@ -233,6 +323,9 @@ const S = {
   sort: { key: "score", dir: -1 },
   sel: null, compare: store.get("compare", []),
   ours: store.get("ours", "2040"),
+  sx: store.get("sx", "auto"), sy: store.get("sy", "tele"), boxMetric: store.get("boxMetric", "total"),
+  isSample: false, tbaEvent: DEFAULT_EVENT, tba: null,   // tba: schedule, scores and rankings
+  ally: store.get("ally", ["", "", ""]),                 // alliance builder: captain, 1st pick, 2nd pick
 };
 
 const $ = id => document.getElementById(id);
@@ -242,6 +335,7 @@ const num = v => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
 const mean = a => a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0;
 const sd = a => { const m = mean(a); return a.length > 1 ? Math.sqrt(mean(a.map(x => (x - m) ** 2))) : 0; };
 const list = v => String(v || "").split(";").map(s => s.trim()).filter(Boolean);
+const mode = a => { const c = {}; let best = ""; a.forEach(v => { c[v] = (c[v] || 0) + 1; if (c[v] > (c[best] || 0)) best = v; }); return best; };
 
 // ---------------------------------------------------------------- schema check
 // index.html puts a stamp "S<n>-<hash>" in the first QR column: n = how many columns follow it, hash = FNV-1a
@@ -263,7 +357,7 @@ function checkSchema(headers, rows) {
     if (!r.some(v => v !== "" && v != null)) return;
     // No Schema column (older workbook, sample data): only a stamp in column A gives away a row that is one column off
     const ok = si < 0 ? !STAMP.test(String(r[0])) : linesUp(r[si]);
-    if (ok) good.push(r); else bad.push(i + 2);   // i + 2 = Excel row number (row 1 holds the headers)
+    if (ok) good.push({ r, row: i + 2 }); else bad.push(i + 2);   // i + 2 = Excel row number (row 1 holds the headers)
   });
   return { good, bad, hasSchema: si >= 0 };
 }
@@ -288,8 +382,8 @@ function setData(headers, rows, name) {
   if (missing.length) { alertBox("This file has no '" + missing.join("', '") + "' column. Use the Scans sheet from the DERT workbook."); return; }
   const schema = checkSchema(headers, rows);
   renderNotice(schema);
-  S.raw = schema.good.map(r => {
-    const o = {}; headers.forEach((h, i) => o[h] = r[i] ?? "");
+  S.raw = schema.good.map(({ r, row }) => {
+    const o = { _row: row }; headers.forEach((h, i) => o[h] = r[i] ?? "");
     // fill points if the sheet has no points columns
     if (o[C.total] === "" || o[C.total] == null) {
       o[C.autoPts] = num(o[C.autoFuel]) + (AUTO_CLIMB[o[C.autoClimb]] || 0);
@@ -303,9 +397,17 @@ function setData(headers, rows, name) {
   $("sourceName").textContent = S.source;
   S.sel = null;
   render();
+  loadTba();
 }
+// The sample data is from 2026ilpe; a real workbook uses the event picked here or on the match predictor page
+function useSource(sample) {
+  S.isSample = sample;
+  S.tbaEvent = sample ? SAMPLE_EVENT : store.get("tbaEvent", null) || matchesPageEvent() || DEFAULT_EVENT;
+}
+function matchesPageEvent() { try { return JSON.parse(localStorage.getItem("dertMatch.event")); } catch (e) { return null; } }
 function loadSample() {
   if (!window.SAMPLE_DATA) return alertBox("Sample data file (data/sample-ilpe2026.js) not found.");
+  useSource(true);
   setData(SAMPLE_DATA.headers, SAMPLE_DATA.rows, SAMPLE_DATA.name);
   store.set("lastSource", "sample");
 }
@@ -318,6 +420,7 @@ function loadFile(file) {
       const sheetName = wb.SheetNames.includes("Scans") ? "Scans" : wb.SheetNames[0];
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: "" });
       const headers = rows.shift().map(h => String(h).trim());
+      useSource(false);
       setData(headers, rows, file.name);
       store.set("lastFile", { name: file.name, headers, rows });
       store.set("lastSource", "file");
@@ -326,6 +429,139 @@ function loadFile(file) {
   reader.readAsArrayBuffer(file);
 }
 function alertBox(msg) { $("tiles").innerHTML = `<div class="tile" style="grid-column:1/-1;border-color:var(--bad)"><div class="k">Problem</div><div>${esc(msg)}</div></div>`; }
+
+// ---------------------------------------------------------------- scouting check (scans vs the TBA schedule and scores)
+// Same sources as matches.html: live TBA data when that page has an API key saved, else the fetch-tba.ps1 snapshot.
+const TBA_API = "https://www.thebluealliance.com/api/v3";
+const tn = k => String(k).replace(/^frc/, "");
+function tbaSnapshot(key) {
+  return new Promise(resolve => {
+    if (window.TBA_EVENTS?.[key]) return resolve(TBA_EVENTS[key]);
+    const s = document.createElement("script");
+    s.src = `data/tba-${key}.js`;
+    s.onload = () => resolve(window.TBA_EVENTS?.[key] || null);
+    s.onerror = () => resolve(null);
+    document.head.append(s);
+  });
+}
+async function tbaLive(key, apiKey) {
+  const get = path => fetch(`${TBA_API}/event/${key}${path}`, { headers: { "X-TBA-Auth-Key": apiKey } })
+    .then(r => { if (!r.ok) throw new Error("TBA error " + r.status); return r.json(); });
+  const [matches, rk] = await Promise.all([get("/matches/simple"), get("/rankings").catch(() => null)]);   // no rankings before quals start
+  const score = a => a.score >= 0 ? a.score : null;   // TBA sends -1 until the match is played
+  return { key, live: true,
+    rankings: (rk?.rankings || []).map(r => ({ rank: r.rank, team: r.team_key })),
+    matches: matches.map(m => ({
+      level: m.comp_level, num: m.match_number, red: m.alliances.red.team_keys, blue: m.alliances.blue.team_keys,
+      redScore: score(m.alliances.red), blueScore: score(m.alliances.blue),
+    })) };
+}
+async function loadTba() {
+  const key = S.tbaEvent;
+  S.tba = null; renderCheck(); renderSleepers();
+  let apiKey = "";
+  try { apiKey = JSON.parse(localStorage.getItem("dertMatch.apiKey") || '""'); } catch (e) {}
+  let d = null;
+  if (apiKey) { try { d = await tbaLive(key, apiKey); } catch (e) { /* offline or bad key: use the snapshot */ } }
+  d ||= await tbaSnapshot(key);
+  if (key !== S.tbaEvent) return;   // another event was picked meanwhile
+  const quals = (d?.matches || []).filter(m => m.level === "qm")
+    .map(m => ({ ...m, red: m.red.map(tn), blue: m.blue.map(tn) }));
+  const ranks = Object.fromEntries((d?.rankings || []).map(r => [tn(r.team), r.rank]));
+  S.tba = { key, name: d?.name || key, live: !!d?.live, quals, ranks };
+  renderCheck(); renderSleepers();
+}
+
+function scoutingCheck() {
+  const qual = r => String(r[C.type] || "Qual") === "Qual";
+  const c = { dups: [], counts: [], missing: [], wrongTeam: [], wrongAlliance: [], offSchedule: [], score: [] };
+  const groups = {};
+  S.raw.forEach(r => (groups[[r[C.type] || "Qual", r[C.match], r[C.team]].join("|")] ||= []).push(r));
+  c.dups = Object.values(groups).filter(g => g.length > 1);
+  const byMatch = {};
+  S.raw.filter(qual).forEach(r => (byMatch[num(r[C.match])] ||= []).push(r));
+  const sched = S.tba?.quals || [];
+  if (!sched.length) {
+    c.counts = Object.entries(byMatch).filter(([, rs]) => rs.length !== 6).map(([n, rs]) => ({ n: +n, scans: rs.length }));
+    return c;
+  }
+  const last = Math.max(0, ...Object.keys(byMatch).map(Number));   // later matches haven't been scouted yet
+  const nums = new Set(sched.map(m => m.num));
+  Object.entries(byMatch).filter(([n]) => !nums.has(+n)).forEach(([n, rs]) => c.offSchedule.push(...rs));
+  sched.filter(m => m.num <= last).forEach(m => {
+    const rs = byMatch[m.num] || [];
+    const scansOf = team => rs.filter(r => String(r[C.team]) === team);
+    ["red", "blue"].forEach(side => m[side].forEach(team => { if (!scansOf(team).length) c.missing.push({ m, team, side }); }));
+    rs.forEach(r => {
+      const team = String(r[C.team]);
+      const side = m.red.includes(team) ? "red" : m.blue.includes(team) ? "blue" : null;
+      if (!side) c.wrongTeam.push({ m, r });
+      else if (String(r[C.alliance]).toLowerCase() !== side) c.wrongAlliance.push({ m, r, side });
+    });
+    // compare points only when each robot of the alliance has exactly one scan
+    ["red", "blue"].forEach(side => {
+      const official = m[side + "Score"], scans = m[side].map(scansOf);
+      if (official == null || scans.some(s => s.length !== 1)) return;
+      c.score.push({ m, side, official, scouted: scans.reduce((s, [r]) => s + num(r[C.total]), 0) });
+    });
+  });
+  return c;
+}
+
+// An alliance is "far off" when scouts' points differ from TBA's score by more than 30% (and at least 30 points)
+const farOff = x => Math.abs(x.scouted - x.official) > Math.max(30, 0.3 * x.official);
+
+function renderCheck() {
+  $("tbaEvent").value = S.tbaEvent;
+  if (!S.raw.length) { $("checkSrc").textContent = "Load data to check it."; $("checkChips").innerHTML = $("checkBody").innerHTML = ""; return; }
+  const c = scoutingCheck(), tba = S.tba, sched = tba?.quals.length;
+  if (!tba) $("checkSrc").textContent = "Loading the TBA schedule…";
+  else if (sched) $("checkSrc").innerHTML = `Qual scans checked against the ${tba.live ? "live" : "saved"} TBA schedule and scores for <b>${esc(tba.name)}</b>.`;
+  else $("checkSrc").innerHTML = `No TBA schedule for <b>${esc(S.tbaEvent)}</b> yet, so only duplicates and scans per match are checked. ` +
+    `Add a TBA API key on the <a href="matches.html">match predictor</a> page, or run fetch-tba.ps1, then click Load.`;
+
+  const Q = m => "Q" + m.num, row = r => "Excel row " + r._row;
+  const matchName = r => ({ Practice: "Practice ", Playoff: "Playoff " }[r[C.type]] || "Q") + r[C.match];
+  const chip = (ok, text) => `<span class="chip ${ok ? "ok" : "warn"}">${ok ? "✓" : "⚠"} ${text}</span>`;
+  const far = c.score.filter(farOff).sort((a, b) => Math.abs(b.scouted - b.official) - Math.abs(a.scouted - a.official));
+  const ratio = c.score.reduce((s, x) => s + x.scouted, 0) / (c.score.reduce((s, x) => s + x.official, 0) || 1);
+  const chips = [`<span class="chip">${S.raw.length} scans</span>`, chip(!c.dups.length, c.dups.length ? `${c.dups.length} duplicate scan(s)` : "no duplicates")];
+  if (sched) {
+    chips.push(chip(!c.missing.length, c.missing.length ? `${c.missing.length} robot(s) not scouted` : "every robot scouted"));
+    const wrong = c.wrongTeam.length + c.offSchedule.length;
+    chips.push(chip(!wrong, wrong ? `${wrong} scan(s) with a team that wasn't in that match` : "team numbers match the schedule"));
+    if (c.wrongAlliance.length) chips.push(chip(false, `${c.wrongAlliance.length} scan(s) on the wrong alliance`));
+    if (c.score.length) {
+      chips.push(`<span class="chip">Scouted points = <b>${pct(ratio)}</b> of official</span>`);
+      chips.push(chip(!far.length, far.length ? `${far.length} alliance(s) far from the official score` : "alliance totals look right"));
+    }
+  } else {
+    chips.push(chip(!c.counts.length, c.counts.length ? `${c.counts.length} match(es) without 6 scans` : "6 scans in every match"));
+  }
+  $("checkChips").innerHTML = chips.join("");
+
+  const section = (title, items) => items.length ? `<h3>${title}</h3><ul class="issues">${items.join("")}</ul>` : "";
+  const missingByMatch = {};
+  c.missing.forEach(x => (missingByMatch[x.m.num] ||= []).push(`${x.side === "red" ? "Red" : "Blue"} ${x.team}`));
+  let body =
+    section("Not scouted", Object.entries(missingByMatch).map(([n, l]) => `<li><span class="m">Q${n}</span> · ${esc(l.join(", "))}</li>`)) +
+    section("Duplicate scans: delete the extra rows", c.dups.map(g => `<li><span class="m">${esc(matchName(g[0]))} · team ${esc(g[0][C.team])}</span> · Excel rows ${g.map(r => r._row).join(", ")} (scouts ${esc(g.map(r => r[C.scout]).join(", "))})</li>`)) +
+    section("Team wasn't in that match: typo?", [
+      ...c.wrongTeam.map(({ m, r }) => `<li><span class="m">${Q(m)} · ${row(r)}</span> · team ${esc(r[C.team])} (${esc(r[C.alliance])}). Red was ${m.red.join(", ")}; Blue was ${m.blue.join(", ")}.</li>`),
+      ...c.offSchedule.map(r => `<li><span class="m">Q${esc(r[C.match])} · ${row(r)}</span> · there's no Q${esc(r[C.match])} on the TBA schedule.</li>`),
+    ]) +
+    section("Wrong alliance", c.wrongAlliance.map(({ m, r, side }) => `<li><span class="m">${Q(m)} · ${row(r)}</span> · team ${esc(r[C.team])} was ${side === "red" ? "Red" : "Blue"}, the scan says ${esc(r[C.alliance] || "nothing")}.</li>`)) +
+    section("Counts per match", c.counts.map(x => `<li><span class="m">Q${x.n}</span> · ${x.scans} scan(s), expected 6</li>`));
+  if (far.length) {
+    body += `<h3>Points far from the official score</h3><p class="hint" style="margin:0 0 6px">Scouts' total for the alliance vs TBA's score, which also includes foul points. A big gap usually means fuel was miscounted.</p>` +
+      `<div class="tablewrap"><table><thead><tr><th class="l">Match</th><th class="l">Alliance</th><th>Scouted</th><th>Official</th><th>Difference</th></tr></thead><tbody>` +
+      far.map(x => `<tr><td class="l">${Q(x.m)}</td><td class="l">${x.side === "red" ? "Red" : "Blue"} ${x.m[x.side].join(", ")}</td><td>${x.scouted}</td><td>${x.official}</td><td>${x.scouted - x.official > 0 ? "+" : "−"}${Math.abs(x.scouted - x.official)}</td></tr>`).join("") +
+      `</tbody></table></div>`;
+  }
+  const issues = c.dups.length + c.missing.length + c.wrongTeam.length + c.offSchedule.length + c.wrongAlliance.length + c.counts.length + far.length;
+  $("checkSum").textContent = issues ? `Show details (${issues})` : "Show details";
+  $("checkBody").innerHTML = body || `<p class="hint">Nothing to fix.</p>`;
+}
 
 // ---------------------------------------------------------------- stats
 function scopedRows() {
@@ -346,7 +582,8 @@ function teamStats() {
     const avgTotal = mean(totals);
     return {
       team: String(team), rows: rs, allRows: all, n: rs.length, noShows: rs.length - played.length,
-      total: avgTotal, best: Math.max(0, ...totals),
+      total: avgTotal, best: Math.max(0, ...totals), sdTotal: sd(totals),
+      start: mode(played.map(r => r[C.start]).filter(Boolean)),
       auto: mean(played.map(r => num(r[C.autoPts]))),
       tele: mean(played.map(r => num(r[C.telePts]))),
       climb: mean(played.map(r => num(r[C.climbPts]))),
@@ -386,8 +623,11 @@ function teamStats() {
 let T = [];
 function render() {
   T = teamStats();
-  renderTiles(); renderWeights(); renderTable(); renderDetail(); renderScatter(); renderCompare();
+  renderTiles(); renderWeights(); renderTable(); renderDetail(); renderScatter(); renderPhases(); renderBoxes(); renderCompare();
+  renderBuilder(); renderSleepers();
 }
+// everything that highlights the selected / compared teams
+function renderTeamViews() { renderTable(); renderDetail(); renderScatter(); renderPhases(); renderBoxes(); renderSleepers(); }
 
 function renderTiles() {
   if (!S.raw.length) { $("tiles").innerHTML = `<div class="tile" style="grid-column:1/-1"><div class="k">No data yet</div><div>Load the Excel workbook (Scans sheet) or click <b>Use sample data</b>.</div></div>`; return; }
@@ -528,28 +768,91 @@ function niceMax(v) {   // smallest "nice" number >= v that splits into 4 clean 
 function ticks(max) { const step = max / 4; return [0, 1, 2, 3, 4].map(i => +(i * step).toFixed(1)); }
 
 // ---------------------------------------------------------------- scatter
+const cmpColor = team => { const i = S.compare.indexOf(team); return i >= 0 ? `var(--s${i + 1})` : null; };
 function renderScatter() {
   const el = $("scatter");
   if (!T.length) { el.innerHTML = `<p class="empty">No data.</p>`; return; }
-  const W = Math.max(320, el.clientWidth || 560), H = 340, m = { l: 40, r: 14, t: 10, b: 34 };
-  const xmax = niceMax(T.max.auto), ymax = niceMax(T.max.tele);
+  const sx = STATS[S.sx], sy = STATS[S.sy];
+  const W = Math.max(320, el.clientWidth || 560), H = 340, m = { l: 44, r: 14, t: 10, b: 34 };
+  const xmax = sx.max ?? niceMax(Math.max(...T.map(t => t[S.sx]))), ymax = sy.max ?? niceMax(Math.max(...T.map(t => t[S.sy])));
   const x = v => m.l + (W - m.l - m.r) * v / xmax, y = v => m.t + (H - m.t - m.b) * (1 - v / ymax);
-  let s = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Average auto points versus average teleop fuel per team">`;
-  ticks(ymax).forEach(v => s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`);
-  ticks(xmax).forEach(v => s += `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${v}</text>`);
+  let s = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(sx.label)} versus ${esc(sy.label)} per team">`;
+  ticks(ymax).forEach(v => s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${sy.max ? sy.f(v) : v}</text>`);
+  ticks(xmax).forEach(v => s += `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${sx.max ? sx.f(v) : v}</text>`);
   s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
-  s += `<text x="${W - m.r}" y="${H - 4}" text-anchor="end" class="lbl">Avg auto pts →</text><text x="${m.l}" y="${m.t + 10}" class="lbl" dx="6">↑ Avg teleop fuel</text>`;
+  s += `<text x="${W - m.r}" y="${H - 4}" text-anchor="end" class="lbl">${esc(sx.label)} →</text><text x="${m.l}" y="${m.t + 10}" class="lbl" dx="6">↑ ${esc(sy.label)}</text>`;
   // event-average crosshair
-  s += `<line x1="${x(T.avg.auto)}" x2="${x(T.avg.auto)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--axis)"/><line x1="${m.l}" x2="${W - m.r}" y1="${y(T.avg.tele)}" y2="${y(T.avg.tele)}" stroke="var(--axis)"/>`;
-  const cmpColor = team => { const i = S.compare.indexOf(team); return i >= 0 ? `var(--s${i + 1})` : null; };
+  const ax = mean(T.map(t => t[S.sx])), ay = mean(T.map(t => t[S.sy]));
+  s += `<line x1="${x(ax)}" x2="${x(ax)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--axis)"/><line x1="${m.l}" x2="${W - m.r}" y1="${y(ay)}" y2="${y(ay)}" stroke="var(--axis)"/>`;
   const labelled = new Set([...T].sort((a, b) => a.rank - b.rank).slice(0, 5).map(t => t.team).concat(S.compare, [S.sel, S.ours]));
   const order = [...T].sort((a, b) => (cmpColor(a.team) || a.team === S.sel ? 1 : 0) - (cmpColor(b.team) || b.team === S.sel ? 1 : 0));
   order.forEach(t => {
-    const cx = x(t.auto), cy = y(t.tele), c = cmpColor(t.team);
+    const cx = x(t[S.sx]), cy = y(t[S.sy]), c = cmpColor(t.team);
     const hi = c || t.team === S.sel || t.team === S.ours;
     s += `<circle cx="${cx}" cy="${cy}" r="${hi ? 6 : 5}" fill="${c || (hi ? "var(--mark)" : "var(--mark-dim)")}" stroke="var(--surface)" stroke-width="2"/>`;
     if (labelled.has(t.team)) s += `<text x="${cx + 8}" y="${cy + 4}" class="lbl">${esc(t.team)}</text>`;
-    s += `<circle cx="${cx}" cy="${cy}" r="12" fill="transparent" style="cursor:pointer" data-team="${esc(t.team)}" data-tip="${esc(`<b>Team ${t.team}</b> · rank #${t.rank}<br>Auto ${t.auto.toFixed(1)} · Teleop fuel ${t.tele.toFixed(1)}<br>Avg total ${t.total.toFixed(1)}`)}"/>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="12" fill="transparent" style="cursor:pointer" data-team="${esc(t.team)}" data-tip="${esc(`<b>Team ${t.team}</b> · rank #${t.rank}<br>${sx.label} ${sx.f(t[S.sx])}<br>${sy.label} ${sy.f(t[S.sy])}`)}"/>`;
+  });
+  el.innerHTML = s + "</svg>";
+}
+
+// ---------------------------------------------------------------- points by phase (every team, stacked)
+function renderPhases() {
+  const el = $("phases");
+  if (!T.length) { el.innerHTML = `<p class="empty">No data.</p>`; return; }
+  const rows = [...T].sort((a, b) => b.total - a.total);
+  const W = Math.max(320, el.clientWidth || 560), rh = 20, bh = 12, m = { l: 48, r: 40, t: 4, b: 24 }, H = m.t + rows.length * rh + m.b;
+  const xmax = niceMax(T.max.total), x = v => m.l + (W - m.l - m.r) * v / xmax;
+  let s = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Average points per match by phase for every team">`;
+  ticks(xmax).forEach(v => s += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${v}</text>`);
+  rows.forEach((t, i) => {
+    const top = m.t + i * rh, y0 = top + (rh - bh) / 2;
+    if (t.team === S.sel) s += `<rect x="0" y="${top}" width="${W}" height="${rh}" fill="color-mix(in srgb, var(--teal) 12%, transparent)"/>`;
+    s += `<text x="${m.l - 8}" y="${y0 + bh - 2}" text-anchor="end" class="lbl" style="${teamLabelStyle(t.team)}">${esc(t.team)}</text>`;
+    const segs = [[t.auto, "var(--s1)"], [t.tele, "var(--s2)"], [t.climb, "var(--s3)"]].filter(p => p[0] > 0);
+    let acc = 0;
+    segs.forEach(([v, c], k) => {
+      const x0 = x(acc) + (k > 0 ? 2 : 0), w = Math.max(0, x(acc + v) - x0);   // 2px gap between segments
+      s += k === segs.length - 1 ? `<path d="${roundRight(x0, y0, w, bh)}" fill="${c}"/>` : `<rect x="${x0}" y="${y0}" width="${w}" height="${bh}" fill="${c}"/>`;
+      acc += v;
+    });
+    s += `<text x="${x(t.total) + 5}" y="${y0 + bh - 2}">${t.total.toFixed(0)}</text>`;
+    s += `<rect x="0" y="${top}" width="${W}" height="${rh}" fill="transparent" style="cursor:pointer" data-team="${esc(t.team)}" data-tip="${esc(`<b>Team ${t.team}</b> · ${t.total.toFixed(1)} pts/match<br>Auto ${t.auto.toFixed(1)} · Teleop fuel ${t.tele.toFixed(1)} · Climb ${t.climb.toFixed(1)}`)}"/>`;
+  });
+  const ax = x(T.avg.total);
+  s += `<line x1="${ax}" x2="${ax}" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" stroke-width="1.5"/></svg>`;
+  el.innerHTML = s;
+}
+function roundRight(x, y, w, h) { const r = Math.min(4, w / 2, h / 2); return `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${y + h}H${x}Z`; }
+// our team in teal, compared teams in their colour, the selected team bold
+const teamLabelStyle = team => (cmpColor(team) ? `fill:${cmpColor(team)};` : team === S.ours ? "fill:var(--teal-ink);" : "") + (team === S.sel ? "font-weight:700;" : "");
+
+// ---------------------------------------------------------------- consistency (box plot per team)
+function quantile(sorted, q) { const p = (sorted.length - 1) * q, i = Math.floor(p); return sorted[i] + ((sorted[i + 1] ?? sorted[i]) - sorted[i]) * (p - i); }
+function renderBoxes() {
+  const el = $("boxes");
+  if (!T.length) { el.innerHTML = `<p class="empty">No data.</p>`; return; }
+  const [label, col] = PER_MATCH[S.boxMetric];
+  const rows = T.map(t => {
+    const v = t.rows.filter(r => r[C.onField] !== "No show").map(r => num(r[col])).sort((a, b) => a - b);
+    return v.length ? { t, v, q1: quantile(v, .25), med: quantile(v, .5), q3: quantile(v, .75) } : null;
+  }).filter(Boolean).sort((a, b) => b.med - a.med || b.q3 - a.q3);
+  const W = Math.max(320, el.clientWidth || 560), rh = 20, m = { l: 48, r: 14, t: 4, b: 24 }, H = m.t + rows.length * rh + m.b;
+  const xmax = niceMax(Math.max(...rows.map(b => b.v.at(-1)))), x = v => m.l + (W - m.l - m.r) * v / xmax;
+  const f = v => (Math.round(v * 10) / 10).toString();
+  let s = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Spread of ${esc(label)} per match for every team">`;
+  ticks(xmax).forEach(v => s += `<line x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${v}</text>`);
+  rows.forEach((b, i) => {
+    const top = m.t + i * rh, cy = top + rh / 2, team = b.t.team;
+    const hi = cmpColor(team) || (team === S.sel || team === S.ours ? "var(--mark)" : null);
+    if (team === S.sel) s += `<rect x="0" y="${top}" width="${W}" height="${rh}" fill="color-mix(in srgb, var(--teal) 12%, transparent)"/>`;
+    s += `<text x="${m.l - 8}" y="${cy + 4}" text-anchor="end" class="lbl" style="${teamLabelStyle(team)}">${esc(team)}</text>`;
+    s += `<line x1="${x(b.v[0])}" x2="${x(b.v.at(-1))}" y1="${cy}" y2="${cy}" stroke="var(--muted)"/>`;
+    [b.v[0], b.v.at(-1)].forEach(v => s += `<line x1="${x(v)}" x2="${x(v)}" y1="${cy - 4}" y2="${cy + 4}" stroke="var(--muted)"/>`);
+    s += `<rect x="${x(b.q1)}" y="${cy - 6}" width="${Math.max(2, x(b.q3) - x(b.q1))}" height="12" rx="2" fill="${hi || "var(--mark-dim)"}"/>`;
+    b.v.forEach(v => s += `<circle cx="${x(v)}" cy="${cy}" r="1.8" fill="var(--text-2)" opacity=".6"/>`);
+    s += `<line x1="${x(b.med)}" x2="${x(b.med)}" y1="${cy - 8}" y2="${cy + 8}" stroke="var(--text)" stroke-width="2.5"/>`;
+    s += `<rect x="0" y="${top}" width="${W}" height="${rh}" fill="transparent" style="cursor:pointer" data-team="${esc(team)}" data-tip="${esc(`<b>Team ${team}</b> · ${label} per match<br>Median ${f(b.med)} · middle half ${f(b.q1)}–${f(b.q3)}<br>Worst ${f(b.v[0])} · best ${f(b.v.at(-1))} · ${b.v.length} matches`)}"/>`;
   });
   el.innerHTML = s + "</svg>";
 }
@@ -586,6 +889,127 @@ function renderCompare() {
   el.innerHTML = s + "</svg>";
 }
 
+// ---------------------------------------------------------------- alliance builder
+const SLOTS = ["Captain", "1st pick", "2nd pick"];
+// Error function (Abramowitz & Stegun 7.1.26), for the normal-curve win chance
+const erf = x => {
+  const t = 1 / (1 + 0.3275911 * Math.abs(x));
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return x < 0 ? -y : y;
+};
+// An alliance scores the sum of its teams' averages; its spread adds up from each team's match-to-match spread
+const alliance = ts => ({ ts, mu: ts.reduce((s, t) => s + t.total, 0), v: ts.reduce((s, t) => s + t.sdTotal ** 2, 0) });
+function winChance(a, b) {
+  const s = Math.sqrt(a.v + b.v);
+  if (s) return 0.5 * (1 + erf((a.mu - b.mu) / (s * Math.SQRT2)));
+  return a.mu === b.mu ? 0.5 : +(a.mu > b.mu);
+}
+const strongestExcept = teams => alliance(T.filter(t => !teams.includes(t.team)).sort((a, b) => b.total - a.total).slice(0, 3));
+const chance = p => p >= 0.995 ? ">99%" : p < 0.005 ? "<1%" : Math.round(p * 100) + "%";   // never claim a sure thing
+
+function renderBuilder() {
+  const el = $("builder");
+  if (!T.length) { el.innerHTML = `<p class="empty">Load data to build an alliance.</p>`; return; }
+  const byTeam = Object.fromEntries(T.map(t => [t.team, t]));
+  S.ally = S.ally.map(team => byTeam[team] ? team : "");   // drop teams that aren't in the loaded data
+  if (!S.ally[0] && byTeam[S.ours] && !S.ally.includes(S.ours)) S.ally[0] = S.ours;
+  const members = S.ally.filter(Boolean).map(team => byTeam[team]);
+  const avgAlliance = { mu: 3 * T.avg.total, v: 3 * mean(T.map(t => t.sdTotal ** 2)) };
+  const markTag = t => ({ picked: " (picked)", dnp: " (avoid)" }[S.marks[t.team]] || "");
+  const sorted = [...T].sort((a, b) => a.team - b.team);
+  let s = `<div class="ally-slots">` + SLOTS.map((label, i) => `<label>${label}<select data-slot="${i}"><option value="">–</option>` +
+    sorted.filter(t => t.team === S.ally[i] || !S.ally.includes(t.team))
+      .map(t => `<option value="${t.team}" ${t.team === S.ally[i] ? "selected" : ""}>${t.team}${markTag(t)}</option>`).join("") +
+    `</select></label>`).join("") + `</div>`;
+
+  if (members.length) {
+    const a = alliance(members), opp = strongestExcept(S.ally);
+    const risk = 1 - members.reduce((p, t) => p * t.rel, 1);
+    const starts = members.map(t => t.start).filter(Boolean), clash = starts.find((v, i) => starts.indexOf(v) !== i);
+    const part = k => members.reduce((sum, t) => sum + t[k], 0).toFixed(0);
+    s += `<div class="mini">
+      <div><div class="k">Expected score${members.length < 3 ? ` (${members.length} of 3 teams)` : ""}</div><div class="v">${a.mu.toFixed(0)}</div><div class="d">auto ${part("auto")} · teleop ${part("tele")} · climb ${part("climb")}</div></div>
+      <div><div class="k">Win chance vs strongest other alliance</div><div class="v">${chance(winChance(a, opp))}</div><div class="d">${opp.ts.map(t => t.team).join(" · ")} (${opp.mu.toFixed(0)} pts)</div></div>
+      <div><div class="k">Win chance vs an average alliance</div><div class="v">${chance(winChance(a, avgAlliance))}</div><div class="d">3 × the event average (${avgAlliance.mu.toFixed(0)} pts)</div></div>
+      <div><div class="k">Chance a robot has a problem</div><div class="v">${pct(risk)}</div><div class="d">per match, from each team's reliability</div></div>
+      <div><div class="k">Climbers</div><div class="v">${members.filter(t => t.climbRate >= 0.5).length} of ${members.length}</div><div class="d">climb in at least half their matches</div></div>
+      <div><div class="k">Usual start positions</div><div class="v" style="font-size:1rem">${members.map(t => `${t.team}: ${esc(t.start || "?")}`).join(" · ")}</div>
+        <div class="d ${clash ? "warn" : ""}">${clash ? `⚠ two robots usually start ${esc(clash)}` : "no clash"}</div></div>
+    </div>`;
+  }
+
+  // Candidates for the first empty slot (or other 2nd picks once the alliance is full), best win chance first
+  const slot = S.ally.includes("") ? S.ally.indexOf("") : 2;
+  const others = members.filter(t => t.team !== S.ally[slot]);
+  const cands = T.filter(t => S.marks[t.team] !== "picked" && (t.team === S.ally[slot] || !S.ally.includes(t.team))).map(t => {
+    const teams = S.ally.map((x, i) => i === slot ? t.team : x).filter(Boolean);
+    const a = alliance(teams.map(x => byTeam[x]));
+    return { t, a, vsTop: winChance(a, strongestExcept(teams)), vsAvg: winChance(a, avgAlliance), clash: t.start && others.some(o => o.start === t.start) };
+  }).sort((x, y) => y.vsTop - x.vsTop || y.a.mu - x.a.mu);
+  const tint = p => `style="background:color-mix(in srgb, var(--heat) ${Math.round(p * 45)}%, transparent)"`;
+  s += `<h3>Best ${SLOTS[slot].toLowerCase()} for this alliance</h3><div class="tablewrap scroll"><table>
+    <thead><tr><th class="l">Team</th><th>Avg pts</th><th>Alliance pts</th><th>Win vs strongest</th><th>Win vs average</th><th>Reliability</th><th>Climb rate</th><th class="l">Usual start</th><th></th></tr></thead><tbody>` +
+    cands.map(({ t, a, vsTop, vsAvg, clash }) => `<tr data-team="${esc(t.team)}" class="${S.marks[t.team] || ""}">
+      <td class="team l">${esc(t.team)}${t.team === S.ally[slot] ? '<span class="tag us">chosen</span>' : ""}${S.marks[t.team] === "dnp" ? '<span class="tag dnp">avoid</span>' : ""}</td>
+      <td>${t.total.toFixed(1)}</td><td>${a.mu.toFixed(0)}</td><td ${tint(vsTop)}>${chance(vsTop)}</td><td ${tint(vsAvg)}>${chance(vsAvg)}</td>
+      <td>${pct(t.rel)}</td><td>${pct(t.climbRate)}</td><td class="l">${clash ? `<span class="clash" title="A partner usually starts here too">${esc(t.start)} ⚠</span>` : esc(t.start || "–")}</td>
+      <td>${t.team === S.ally[slot] ? "" : `<button class="add" data-add="${esc(t.team)}" data-slot="${slot}">Add</button>`}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+  el.innerHTML = s;
+}
+
+// ---------------------------------------------------------------- sleeper picks (TBA rank vs our rank)
+function renderSleepers() {
+  const chart = $("sleeperChart"), table = $("sleeperTable"), ranks = S.tba?.ranks || {};
+  const both = T.filter(t => ranks[t.team]);
+  if (both.length < 2) {
+    let msg = "No data.";
+    if (T.length) msg = S.tba ? `Needs the TBA rankings for ${esc(S.tbaEvent)}. They appear once quals start: load them in the Scouting Check above.` : "Loading the TBA rankings…";
+    chart.innerHTML = `<p class="empty">${msg}</p>`; table.innerHTML = ""; return;
+  }
+  // rank both ways among the teams that are in both lists
+  const tbaOrder = [...both].sort((a, b) => ranks[a.team] - ranks[b.team]), ourOrder = [...both].sort((a, b) => a.rank - b.rank);
+  const byTeam = Object.fromEntries(T.map(t => [t.team, t]));
+  const partners = {};   // team -> scouted averages of its qual partners: low = it carried weak alliances
+  S.tba.quals.filter(m => m.redScore != null).forEach(m => ["red", "blue"].forEach(side => m[side].forEach(team =>
+    (partners[team] ||= []).push(...m[side].filter(x => x !== team && byTeam[x]).map(x => byTeam[x].total)))));
+  const rows = both.map(t => {
+    const tr = tbaOrder.indexOf(t) + 1, or = ourOrder.indexOf(t) + 1;
+    return { t, tr, or, gap: tr - or, partner: partners[t.team]?.length ? mean(partners[t.team]) : null };
+  });
+
+  const n = both.length, W = Math.max(300, chart.clientWidth || 520), H = 370, m = { l: 36, r: 14, t: 26, b: 34 };
+  const x = v => m.l + (W - m.l - m.r) * (v - 1) / (n - 1), y = v => m.t + (H - m.t - m.b) * (v - 1) / (n - 1);
+  let s = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="TBA rank versus our pick-list rank">`;
+  s += `<path d="M${x(1)},${y(1)}L${x(n)},${y(1)}L${x(n)},${y(n)}Z" fill="color-mix(in srgb, var(--teal) 10%, transparent)"/>`;
+  [1, ...Array.from({ length: Math.floor(n / 5) }, (_, i) => (i + 1) * 5)].filter(v => v <= n).forEach(v => {
+    s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+    s += `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${v}</text>`;
+  });
+  s += `<line x1="${x(1)}" y1="${y(1)}" x2="${x(n)}" y2="${y(n)}" stroke="var(--axis)" stroke-dasharray="4 4"/>`;
+  s += `<text x="${x(n) - 4}" y="${y(1) + 16}" text-anchor="end" class="lbl">Sleepers: we rate them higher ↗</text>`;
+  s += `<text x="${x(1) + 4}" y="${y(n) - 6}" class="lbl">↙ Rank higher than they scout</text>`;
+  s += `<text x="${W - m.r}" y="${H - 4}" text-anchor="end" class="lbl">TBA rank →</text><text x="${m.l}" y="${m.t - 12}" dx="-28" class="lbl">↓ Our rank</text>`;
+  const labelled = new Set([...rows].sort((a, b) => b.gap - a.gap).slice(0, 5).filter(r => r.gap >= 5).map(r => r.t.team).concat(S.compare, [S.sel, S.ours]));
+  rows.forEach(({ t, tr, or, gap, partner }) => {
+    const cx = x(tr), cy = y(or), c = cmpColor(t.team), hi = c || t.team === S.sel || t.team === S.ours;
+    const fill = c || (hi || gap >= 5 ? "var(--mark)" : "var(--mark-dim)");
+    s += `<circle cx="${cx}" cy="${cy}" r="${hi ? 6 : 5}" fill="${fill}" stroke="var(--surface)" stroke-width="2" opacity="${S.marks[t.team] === "picked" ? 0.35 : 1}"/>`;
+    if (labelled.has(t.team)) s += `<text x="${cx + 8}" y="${cy + 4}" class="lbl" style="${teamLabelStyle(t.team)}">${esc(t.team)}</text>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="11" fill="transparent" style="cursor:pointer" data-team="${esc(t.team)}" data-tip="${esc(`<b>Team ${t.team}</b><br>TBA rank ${ranks[t.team]} · our rank ${t.rank}<br>${t.total.toFixed(1)} pts/match${partner != null ? ` · partners averaged ${partner.toFixed(0)}` : ""}`)}"/>`;
+  });
+  chart.innerHTML = s + "</svg>";
+
+  const sleepers = rows.filter(r => r.gap >= 3).sort((a, b) => b.gap - a.gap).slice(0, 10);
+  table.innerHTML = !sleepers.length ? `<p class="empty">No big sleepers: the standings match our scouting.</p>` :
+    `<div class="tablewrap"><table><thead><tr><th class="l">Team</th><th>TBA rank</th><th>Our rank</th><th>Places higher</th><th>Avg pts</th><th>Partners' avg</th></tr></thead><tbody>` +
+    sleepers.map(({ t, partner, gap }) => `<tr data-team="${esc(t.team)}" class="${S.marks[t.team] || ""} ${S.sel === t.team ? "sel" : ""}">
+      <td class="team l">${esc(t.team)}${t.team === S.ours ? '<span class="tag us">us</span>' : ""}${S.marks[t.team] === "picked" ? '<span class="tag picked">picked</span>' : ""}${S.marks[t.team] === "dnp" ? '<span class="tag dnp">avoid</span>' : ""}</td>
+      <td>${ranks[t.team]}</td><td>${t.rank}</td><td>+${gap}</td><td>${t.total.toFixed(1)}</td>
+      <td>${partner == null ? "–" : `${partner.toFixed(0)} <span class="delta ${partner < T.avg.total ? "down" : "up"}">${partner < T.avg.total ? "▼" : "▲"}</span>`}</td></tr>`).join("") +
+    `</tbody></table></div><p class="hint" style="margin-top:8px">Partners' avg = scouted points per match of the teams they were paired with in quals; ▼ means weaker than the event average (${T.avg.total.toFixed(0)}). "Places higher" counts only teams in both lists.</p>`;
+}
+
 // ---------------------------------------------------------------- events
 $("loadBtn").onclick = () => $("file").click();
 $("file").onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
@@ -603,7 +1027,7 @@ $("ourTeam").onchange = e => { S.ours = e.target.value.trim(); store.set("ours",
 $("weights").oninput = e => {
   const k = e.target.dataset.w; if (!k) return;
   S.weights[k] = +e.target.value; $("wv-" + k).textContent = e.target.value; store.set("weights", S.weights);
-  T = teamStats(); renderTable(); renderTiles(); renderDetail(); renderScatter();
+  T = teamStats(); renderTable(); renderTiles(); renderDetail(); renderScatter(); renderSleepers();
 };
 $("presets").onclick = e => {
   const p = e.target.dataset.preset; if (!p) return;
@@ -614,21 +1038,54 @@ $("rankTable").onclick = e => {
   if (th) { const k = th.dataset.sort; S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : (k === "rank" || k === "team" ? 1 : -1) }; renderTable(); return; }
   const tr = e.target.closest("tr[data-team]"); if (!tr) return;
   const team = tr.dataset.team, mb = e.target.closest("button");
-  if (mb && mb.dataset.mark) { S.marks[team] = S.marks[team] === mb.dataset.mark ? undefined : mb.dataset.mark; store.set("marks", S.marks); renderTable(); return; }
+  if (mb && mb.dataset.mark) { S.marks[team] = S.marks[team] === mb.dataset.mark ? undefined : mb.dataset.mark; store.set("marks", S.marks); renderTable(); renderBuilder(); renderSleepers(); return; }
   if (mb && mb.hasAttribute("data-cmp")) { addCompare(team); return; }
-  S.sel = team; renderTable(); renderDetail(); renderScatter();
+  S.sel = team; renderTeamViews();
   if (window.innerWidth < 1000) $("detailCard").scrollIntoView({ behavior: "smooth" });
 };
 function addCompare(team) {
   if (!S.compare.includes(team)) { if (S.compare.length >= 3) S.compare.shift(); S.compare.push(team); }
-  store.set("compare", S.compare); renderCompare(); renderScatter();
+  store.set("compare", S.compare); renderCompare(); renderScatter(); renderPhases(); renderBoxes(); renderSleepers();
 }
 document.addEventListener("change", e => {
-  if (e.target.id === "teamSelect") { S.sel = e.target.value; renderTable(); renderDetail(); renderScatter(); }
+  if (e.target.id === "teamSelect") { S.sel = e.target.value; renderTeamViews(); }
   if (e.target.id === "cmpAdd" && e.target.value) addCompare(e.target.value);
 });
-$("comparePick").onclick = e => { const b = e.target.closest("button[data-rm]"); if (!b) return; S.compare = S.compare.filter(t => t !== b.dataset.rm); store.set("compare", S.compare); renderCompare(); renderScatter(); };
-$("scatter").onclick = e => { const c = e.target.closest("[data-team]"); if (!c) return; S.sel = c.dataset.team; renderTable(); renderDetail(); renderScatter(); };
+$("comparePick").onclick = e => { const b = e.target.closest("button[data-rm]"); if (!b) return; S.compare = S.compare.filter(t => t !== b.dataset.rm); store.set("compare", S.compare); renderCompare(); renderScatter(); renderPhases(); renderBoxes(); renderSleepers(); };
+const openTeam = e => { const c = e.target.closest("[data-team]"); if (!c) return; S.sel = c.dataset.team; renderTeamViews(); };
+["scatter", "phases", "boxes", "sleeperChart", "sleeperTable"].forEach(id => $(id).onclick = openTeam);
+
+// alliance builder: pick a slot, Add a suggestion, or click a row to open the team
+const setSlot = (i, team) => { S.ally[i] = team; store.set("ally", S.ally); renderBuilder(); };
+$("builder").onchange = e => { if (e.target.dataset.slot != null) setSlot(+e.target.dataset.slot, e.target.value); };
+$("builder").onclick = e => {
+  const b = e.target.closest("button[data-add]");
+  if (b) setSlot(+b.dataset.slot, b.dataset.add);
+  else if (!e.target.closest("select")) openTeam(e);
+};
+$("allyClear").onclick = () => { S.ally = ["", "", ""]; store.set("ally", S.ally); renderBuilder(); };
+
+// chart pickers (a stat saved by an older version may no longer exist)
+["sx", "sy"].forEach(id => {
+  $(id).innerHTML = Object.entries(STATS).map(([k, s]) => `<option value="${k}">${esc(s.label)}</option>`).join("");
+  if (!STATS[S[id]]) S[id] = id === "sx" ? "auto" : "tele";
+  $(id).value = S[id];
+  $(id).onchange = e => { S[id] = e.target.value; store.set(id, S[id]); renderScatter(); };
+});
+$("boxMetric").innerHTML = Object.entries(PER_MATCH).map(([k, [label]]) => `<option value="${k}">${esc(label)} per match</option>`).join("");
+if (!PER_MATCH[S.boxMetric]) S.boxMetric = "total";
+$("boxMetric").value = S.boxMetric;
+$("boxMetric").onchange = e => { S.boxMetric = e.target.value; store.set("boxMetric", S.boxMetric); renderBoxes(); };
+
+// TBA event for the scouting check
+function pickEvent() {
+  const key = $("tbaEvent").value.trim().toLowerCase(); if (!key) return;
+  S.tbaEvent = key;
+  if (!S.isSample) store.set("tbaEvent", key);
+  loadTba();
+}
+$("tbaLoad").onclick = pickEvent;
+$("tbaEvent").onkeydown = e => { if (e.key === "Enter") pickEvent(); };
 
 // shared tooltip
 const tip = $("tip");
@@ -639,14 +1096,14 @@ document.addEventListener("mousemove", e => {
   const x = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
   tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px";
 });
-let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDetail(); renderScatter(); renderCompare(); }, 150); });
+let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDetail(); renderScatter(); renderPhases(); renderBoxes(); renderCompare(); renderSleepers(); }, 150); });
 
 // ---------------------------------------------------------------- start: last file, else sample
 (function init() {
   const last = store.get("lastSource", "sample"), file = store.get("lastFile", null);
-  if (last === "file" && file) setData(file.headers, file.rows, file.name);
+  if (last === "file" && file) { useSource(false); setData(file.headers, file.rows, file.name); }
   else if (window.SAMPLE_DATA) loadSample();
-  else render();
+  else { render(); renderCheck(); }
 })();
 </script>
 </body>
