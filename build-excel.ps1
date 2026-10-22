@@ -20,6 +20,30 @@ function Fnv1a([string]$s) {
 }
 $schema = "S$($n - 1)-$(Fnv1a ($headers[1..($n - 1)] -join "`t"))"
 
+# Excel rejects COM calls while it is busy calculating ("Call was rejected by callee"); this filter makes them wait and retry
+if (-not ("ExcelMessageFilter" -as [type])) {
+  Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("00000016-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IOleMessageFilter {
+  [PreserveSig] int HandleInComingCall(int callType, IntPtr caller, int tickCount, IntPtr interfaceInfo);
+  [PreserveSig] int RetryRejectedCall(IntPtr callee, int tickCount, int rejectType);
+  [PreserveSig] int MessagePending(IntPtr callee, int tickCount, int pendingType);
+}
+public class ExcelMessageFilter : IOleMessageFilter {
+  [DllImport("ole32.dll")] static extern int CoRegisterMessageFilter(IOleMessageFilter filter, out IOleMessageFilter old);
+  public static void Register() { IOleMessageFilter old; CoRegisterMessageFilter(new ExcelMessageFilter(), out old); }
+  public static void Revoke() { IOleMessageFilter old; CoRegisterMessageFilter(null, out old); }
+  public int HandleInComingCall(int callType, IntPtr caller, int tickCount, IntPtr interfaceInfo) { return 0; }
+  // 2 = SERVERCALL_RETRYLATER: try again after 100 ms, give up after 2 minutes
+  public int RetryRejectedCall(IntPtr callee, int tickCount, int rejectType) { return rejectType == 2 && tickCount < 120000 ? 100 : -1; }
+  public int MessagePending(IntPtr callee, int tickCount, int pendingType) { return 2; }
+}
+"@
+}
+[ExcelMessageFilter]::Register()
+
 function RGB($r,$g,$b) { $r + 256*$g + 65536*$b }
 $TEAL = RGB 18 180 175; $DARK = RGB 28 28 28; $LIGHT = RGB 249 249 249; $YELLOW = RGB 255 242 153; $WHITE = RGB 255 255 255
 
@@ -27,14 +51,21 @@ $x = New-Object -ComObject Excel.Application
 $x.Visible = $false; $x.DisplayAlerts = $false; $x.ScreenUpdating = $false
 try {
   $wb = $x.Workbooks.Add()
-  while ($wb.Worksheets.Count -lt 4) { [void]$wb.Worksheets.Add([Type]::Missing, $wb.Worksheets.Item($wb.Worksheets.Count)) }
+  # Manual calculation while building: otherwise Excel is still recalculating when the next call arrives and rejects it
+  $x.Calculation = -4135
+  while ($wb.Worksheets.Count -lt 6) { [void]$wb.Worksheets.Add([Type]::Missing, $wb.Worksheets.Item($wb.Worksheets.Count)) }
   $wb.Styles.Item("Normal").Font.Name = "Arial"
   $wb.Styles.Item("Normal").Font.Size = 10
 
-  $info = $wb.Worksheets.Item(1); $info.Name = "Instructions"
-  $scan = $wb.Worksheets.Item(2); $scan.Name = "Scans"
-  $sum  = $wb.Worksheets.Item(3); $sum.Name  = "Team Summary"
-  $look = $wb.Worksheets.Item(4); $look.Name = "Team Lookup"
+  $info  = $wb.Worksheets.Item(1); $info.Name  = "Instructions"
+  $scan  = $wb.Worksheets.Item(2); $scan.Name  = "Scans"
+  $sum   = $wb.Worksheets.Item(3); $sum.Name   = "Team Summary"
+  $look  = $wb.Worksheets.Item(4); $look.Name  = "Team Lookup"
+  $check = $wb.Worksheets.Item(5); $check.Name = "Scouting Check"
+  $sched = $wb.Worksheets.Item(6); $sched.Name = "TBA Schedule"
+
+  # Long formulas are written over several lines below for reading; Excel gets them on one line
+  function OneLine([string]$f) { $f -replace '\r?\n\s*', '' }
 
   function Title($ws, $text, $sub, $lastCol) {
     $r = $ws.Range("A1:$($lastCol)1"); $r.Interior.Color = $DARK
@@ -46,6 +77,43 @@ try {
   function HeaderStyle($r) {
     $r.Interior.Color = $TEAL; $r.Font.Color = $DARK; $r.Font.Bold = $true; $r.WrapText = $true; $r.VerticalAlignment = -4108
   }
+
+  # ---------------- TBA Schedule ----------------
+  # The data lead pastes TBA's Flat Schedule CSV into A5 (one robot per line: match_key,date,time,comp_level,
+  # match_number,set_number,color,team). Excel either keeps each line in one cell or splits it over A:H;
+  # the formula in R5 reads both and returns the qual matches as Match # | Alliance | Team #.
+  Title $sched "DERT #2040 - TBA Schedule" "Paste TBA's Flat Schedule here so the Scouting Check can find unscouted robots, team-number typos and wrong alliances." "T"
+  $sched.Range("A4").Value2 = "Paste the Flat Schedule here: click the yellow cell, then press Ctrl+V"
+  $sched.Range("A4").Font.Bold = $true
+  $sched.Range("A5").Interior.Color = $YELLOW; $sched.Range("A5").Borders.Weight = 2
+  $sched.Columns.Item(1).ColumnWidth = 62
+  $howTo = @(
+    "HOW TO GET THE SCHEDULE",
+    "1. On thebluealliance.com open your event (for example thebluealliance.com/event/2026iltrr) and click the Scouting tab.",
+    "2. Under Flat Schedule, click Copy to Clipboard.",
+    "3. Click the yellow cell A5 on this sheet and press Ctrl+V.",
+    "4. Done: the Scouting Check sheet now compares every scan with the schedule.",
+    "Paste again (over the old one) if the schedule changes. TBA usually has it the day before quals.",
+    "To remove it: select columns A to H from row 5 down and press Delete."
+  )
+  for ($i = 0; $i -lt $howTo.Count; $i++) { $sched.Cells.Item(4 + $i, 10).Value2 = $howTo[$i] }
+  $sched.Range("J4").Font.Bold = $true; $sched.Columns.Item(10).ColumnWidth = 3
+  $sched.Range("R3").Value2 = "Read from the paste (don't type here)"; $sched.Range("R3").Font.Italic = $true; $sched.Range("R3").Font.Color = RGB 120 120 120
+  $sched.Range("R4").Value2 = "Match #"; $sched.Range("S4").Value2 = "Alliance"; $sched.Range("T4").Value2 = "Team #"
+  HeaderStyle $sched.Range("R4:T4")
+  foreach ($c in 18..20) { $sched.Columns.Item($c).ColumnWidth = 10 }
+  # Built before the other sheets: adding it after Team Summary / Team Lookup crashes Excel, and so does a LAMBDA over 3000 rows.
+  $sched.Range("R5").Formula2 = OneLine @'
+=LET(src,A1:H2000,a,INDEX(src,,1),
+line,IF(INDEX(src,,2)="",a,a&","&INDEX(src,,2)&","&INDEX(src,,3)&","&INDEX(src,,4)&","&INDEX(src,,5)&","&INDEX(src,,6)&","&INDEX(src,,7)&","&INDEX(src,,8)),
+t,","&line&",",
+lvl,IFERROR(TEXTBEFORE(TEXTAFTER(t,",",4),","),""),
+num,IFERROR(--TEXTBEFORE(TEXTAFTER(t,",",5),","),""),
+side,LOWER(IFERROR(TEXTBEFORE(TEXTAFTER(t,",",7),","),"")),
+tm,IFERROR(--TEXTBEFORE(TEXTAFTER(t,",",8),","),""),
+keep,ISNUMBER(num)*ISNUMBER(tm)*(lvl="qm")*((side="red")+(side="blue")),
+IFERROR(FILTER(HSTACK(num,PROPER(side),tm),keep),HSTACK("","","")))
+'@
 
   # ---------------- Scans ----------------
   for ($i = 0; $i -lt $n; $i++) { $scan.Cells.Item(1, $i + 1).Value2 = $headers[$i] }
@@ -146,6 +214,61 @@ try {
   $look.Columns.Item(3).ColumnWidth = 14
   $look.Activate(); $x.ActiveWindow.SplitRow = 5; $x.ActiveWindow.FreezePanes = $true
 
+  # ---------------- Scouting Check ----------------
+  # One list of problems (A15) built from the Scans table and, once pasted, the TBA schedule; the counts above it read that list.
+  Title $check "DERT #2040 - Scouting Check" "Problems to fix in the Scans sheet. Updates by itself; paste the TBA schedule on the TBA Schedule sheet for the full check." "G"
+  $hasSched = 'COUNT(INDEX(''TBA Schedule''!$R$5#,,1))>0'
+  function CountOf($label) { 'COUNTIF(INDEX($A$15#,,1),"' + $label + '")' }
+  $summary = @(
+    @("Scans", '=COUNTIF(Scans[Team ''#],"<>")', ""),
+    @("Duplicate scans (rows)", ('=' + (CountOf "Duplicate scan")), "Same match + team scanned more than once: delete the extra row on the Scans sheet."),
+    @("Matches without 6 scans", ('=IF(' + $hasSched + ',"–",' + (CountOf "Not 6 scans") + ')'), "Find the missing scout, or a duplicate. (Replaced by the checks below once the schedule is pasted.)"),
+    @("Robots not scouted", ('=IF(' + $hasSched + ',' + (CountOf "Not scouted") + ',"needs schedule")'), "Ask that robot's scout to show the QR code again: Submitted matches in the app."),
+    @("Team not in that match", ('=IF(' + $hasSched + ',' + (CountOf "Team not in that match") + ',"needs schedule")'), "Usually a typo in Team #: fix that cell on the Scans sheet."),
+    @("Wrong alliance", ('=IF(' + $hasSched + ',' + (CountOf "Wrong alliance") + ',"needs schedule")'), "Fix the Alliance cell on the Scans sheet."),
+    @("TBA schedule", ('=IF(' + $hasSched + ',COUNT(INDEX(''TBA Schedule''!$R$5#,,1))/6&" qual matches","not pasted yet")'), "See the TBA Schedule sheet.")
+  )
+  $check.Range("A4").Value2 = "Check"; $check.Range("B4").Value2 = "Found"; $check.Range("C4").Value2 = "What to do"
+  HeaderStyle $check.Range("A4:G4")
+  $check.Range("A13").Value2 = "PROBLEMS TO FIX"; $check.Range("A13").Font.Bold = $true; $check.Range("A13").Font.Size = 12
+  $listHead = @("Problem", "Match #", "Team #", "Alliance", "Excel row", "Scout", "What it means")
+  for ($i = 0; $i -lt $listHead.Count; $i++) { $check.Cells.Item(14, $i + 1).Value2 = $listHead[$i] }
+  HeaderStyle $check.Range("A14:G14")
+  $cw = @(24, 9, 9, 9, 10, 14, 70)
+  for ($i = 0; $i -lt $cw.Count; $i++) { $check.Columns.Item($i + 1).ColumnWidth = $cw[$i] }
+  $check.Range("B15:E3000").HorizontalAlignment = -4108
+  $check.Range("A15").Formula2 = OneLine @'
+=LET(ty,Scans[Match type],mt,Scans[Match '#],tm,Scans[Team '#],al,Scans[Alliance],sc,Scans[Scout name],rw,ROW(Scans[Team '#]),
+nT,SEQUENCE(ROWS(tm)),
+has,tm<>"",
+qual,has*((ty="Qual")+(ty="")),
+s,'TBA Schedule'!$R$5#,sm,INDEX(s,,1),sa,INDEX(s,,2),st,INDEX(s,,3),nS,SEQUENCE(ROWS(sm)),
+hasSched,COUNT(sm)>0,
+dupN,COUNTIFS(Scans[Team '#],tm,Scans[Match '#],mt,Scans[Match type],ty),
+dup,FILTER(HSTACK(IF(nT,"Duplicate scan"),mt,tm,al,rw,sc,"Scanned "&dupN&" times: delete the extra row"),has*(dupN>1),""),
+qm,UNIQUE(FILTER(mt,qual,"")),nQ,SEQUENCE(ROWS(qm)),
+qc,COUNTIFS(Scans[Match '#],qm,Scans[Team '#],"<>",Scans[Match type],"Qual")+COUNTIFS(Scans[Match '#],qm,Scans[Team '#],"<>",Scans[Match type],""),
+cnt,IF(hasSched,"",FILTER(HSTACK(IF(nQ,"Not 6 scans"),qm,IF(nQ,""),IF(nQ,""),IF(nQ,""),IF(nQ,""),qc&" scans in this match, expected 6"),(qm<>"")*(qc<>6),"")),
+last,MAX(FILTER(mt,qual,0)),
+seen,COUNTIFS(Scans[Match '#],sm,Scans[Team '#],st,Scans[Match type],"Qual")+COUNTIFS(Scans[Match '#],sm,Scans[Team '#],st,Scans[Match type],""),
+miss,IF(hasSched,FILTER(HSTACK(IF(nS,"Not scouted"),sm,st,sa,IF(nS,""),IF(nS,""),IF(nS,"Nobody scanned this robot: ask its scout to show the QR code again (Submitted matches)")),ISNUMBER(sm)*(sm<=last)*(seen=0),""),""),
+inM,COUNTIFS(sm,mt,st,tm),
+wt,IF(hasSched,FILTER(HSTACK(IF(nT,"Team not in that match"),mt,tm,al,rw,sc,IF(COUNTIFS(sm,mt)>0,"Typo in Team #? Check the schedule for this match","There is no such qual match on the TBA schedule")),qual*(inM=0),""),""),
+inA,COUNTIFS(sm,mt,st,tm,sa,al),
+wa,IF(hasSched,FILTER(HSTACK(IF(nT,"Wrong alliance"),mt,tm,al,rw,sc,"The schedule says "&XLOOKUP(mt&"|"&tm,sm&"|"&st,sa,"?")),qual*(inM>0)*(inA=0),""),""),
+all,VSTACK(dup,cnt,miss,wt,wa),
+IFERROR(FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE)),"✓ Nothing to fix"))
+'@
+  # The counts read the list in A15, so they go in after it
+  for ($i = 0; $i -lt $summary.Count; $i++) {
+    $check.Cells.Item(5 + $i, 1).Value2 = $summary[$i][0]; $check.Cells.Item(5 + $i, 1).Font.Bold = $true
+    $check.Cells.Item(5 + $i, 2).Formula2 = $summary[$i][1]; $check.Cells.Item(5 + $i, 2).HorizontalAlignment = -4108
+    $check.Cells.Item(5 + $i, 3).Value2 = $summary[$i][2]
+  }
+  # Counts: red when above 0, green at 0 (cell-value rules, so no function names that differ by Excel language)
+  $fc = $check.Range("B6:B10").FormatConditions.Add(1, 1, "=1", "=1E+307"); $fc.Interior.Color = RGB 255 199 206; $fc.Font.Color = RGB 156 0 6
+  $fc = $check.Range("B6:B10").FormatConditions.Add(1, 3, "=0"); $fc.Interior.Color = RGB 198 239 206; $fc.Font.Color = RGB 0 97 0
+
   # ---------------- Instructions ----------------
   Title $info "DERT #2040 - REBUILT Scouting Workbook" "Import data from the DERT Scout web app (index.html) by scanning its QR codes." "J"
   $info.Columns.Item(1).ColumnWidth = 4; $info.Columns.Item(2).ColumnWidth = 110
@@ -160,10 +283,15 @@ try {
     @("2","Scan the student's QR code. The whole match fills one row and the cursor moves to the next row automatically."),
     @("3","Repeat for every QR code. Keep scanning - the table grows by itself."),
     @("4","Made a mistake? Delete the whole row (right-click row number > Delete) and scan again."),
+    @("h","CHECKING THE DATA"),
+    @("1","Once TBA has the match schedule (usually the day before quals), paste it on the TBA Schedule sheet - the steps are on that sheet."),
+    @("2","Every few matches, open the Scouting Check sheet. Red numbers = something to fix; the list below them says what and in which Excel row."),
     @("h","SHEETS"),
     @("-","Scans - raw data, one row per robot per match. Do not change the column headers or their order."),
     @("-","Team Summary - averages per team (updates automatically). Pick list on the right is sorted by average total points."),
     @("-","Team Lookup - type a team number in the yellow cell to see every match and all observations for that team."),
+    @("-","Scouting Check - duplicate scans, matches without 6 scans and, with the TBA schedule, unscouted robots, team-number typos and wrong alliances."),
+    @("-","TBA Schedule - paste TBA's Flat Schedule here. Nothing else to type."),
     @("h","LEGEND"),
     @("-","Teal header = column names (must match the web app).   Yellow cell = type here.   Everything else is calculated or scanned - don't edit."),
     @("-","Points: fuel in active Hub = 1 pt. Tower Level 1 = 15 pts in auto / 10 pts in teleop, Level 2 = 20, Level 3 = 30 (2026 REBUILT Game Manual, Table 6-4)."),
@@ -211,15 +339,20 @@ try {
       }
     }
     $look.Range("B3").Value2 = 2040
-    $x.Calculate()
+    $x.CalculateFull()
     "Summary rows:"
     for ($rr = 5; $rr -le 6; $rr++) { ($sum.Range("A$($rr):R$($rr)").Value2 | ForEach-Object { $_ }) -join " | " }
     "Pick list:"
     for ($rr = 5; $rr -le 6; $rr++) { ($sum.Range("T$($rr):AC$($rr)").Value2 | ForEach-Object { $_ }) -join " | " }
     "Lookup: " + $look.Range("C3").Text + " / " + $look.Range("D3").Text + " / Match # col C: " + $look.Range("C6").Text + ", " + $look.Range("C7").Text + " / A8: " + $look.Range("A8").Text
     "Table rows: " + $lo.ListRows.Count
+    "Scouting Check: " + ((5..11 | ForEach-Object { $check.Range("A$_").Text + "=" + $check.Range("B$_").Text }) -join ", ")
+    "  first problem: " + (($check.Range("A15:G15").Value2 | ForEach-Object { $_ }) -join " | ")
   }
 
+  # Back to automatic so the saved workbook updates by itself
+  $x.Calculation = -4105
+  $x.CalculateFull()
   $info.Activate(); $info.Range("A1").Select()
   if (Test-Path $Out) { Remove-Item $Out }
   $wb.SaveAs($Out, 51)
@@ -231,4 +364,5 @@ try {
 } finally {
   try { $x.Quit() } catch {}
   [void][Runtime.InteropServices.Marshal]::ReleaseComObject($x)
+  [ExcelMessageFilter]::Revoke()
 }

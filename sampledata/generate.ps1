@@ -165,10 +165,23 @@ try {
   $lo.Resize($ws.Range("A1:$lastCol$($rows.Count + 1)"))
   $ws.Range("A2:$lastCol$($rows.Count + 1)").Value2 = $arr
   $wb.Worksheets.Item("Team Lookup").Range("B3").Value2 = 2040
+  # The real TBA Flat Schedule, pasted the way the data lead would (one line per cell from A5)
+  $flat = @(Get-Content "$dir\tba_flat_schedule_2026ilpe.csv" | Where-Object { $_ })
+  $schedWs = $wb.Worksheets | Where-Object { $_.Name -eq "TBA Schedule" }
+  if ($schedWs -and $flat.Count) {
+    $lines = New-Object 'object[,]' $flat.Count, 1
+    # [string]: Get-Content lines carry PowerShell extras that Excel can't take ("insufficient memory")
+    for ($i = 0; $i -lt $flat.Count; $i++) { $lines[$i, 0] = [string]$flat[$i] }
+    $schedWs.Range("A5:A$($flat.Count + 4)").Value2 = $lines
+  }
   $x.CalculateFull()
   $sum = $wb.Worksheets.Item("Team Summary")
   "Table rows: $($lo.ListRows.Count); summary teams: " + $x.WorksheetFunction.CountA($sum.Range("A5:A304"))
   "Pick list top 5: " + ((5..9 | ForEach-Object { "$($sum.Range("U$_").Text) ($($sum.Range("V$_").Text))" }) -join ', ')
+  if ($schedWs) {
+    $chk = $wb.Worksheets.Item("Scouting Check")
+    "Scouting Check: " + ((5..11 | ForEach-Object { $chk.Range("A$_").Text + "=" + $chk.Range("B$_").Text }) -join ", ") + " | " + $chk.Range("A15").Text
+  }
   $sum.Activate(); $sum.Range("A5").Select() | Out-Null
   $wb.Save(); $wb.Close($false); "Saved $Workbook"
 } finally { $x.Quit(); [void][Runtime.InteropServices.Marshal]::ReleaseComObject($x) }
