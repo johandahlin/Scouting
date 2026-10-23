@@ -278,7 +278,12 @@ async function load() {
   S.error = ""; S.note = "";
   $("srcText").textContent = "Loading…";
   let d = await getEvent(S.event);
-  if (!d?.matches.length && S.event !== FALLBACK_EVENT) {
+  const teamCount = d ? Object.keys(d.teams).length : 0;
+  if (d && !d.matches.length && teamCount) {
+    // Teams are registered but there's no schedule yet: show this event anyway
+    S.note = `${d.name} has ${teamCount} teams on The Blue Alliance but no match schedule yet. Matches and win chances appear once TBA publishes it: ` +
+      `run fetch-tba.ps1 -EventKey ${S.event} again, or add a TBA API key under Live data. To try the page with a finished event, load ${FALLBACK_EVENT}.`;
+  } else if (!d?.matches.length && S.event !== FALLBACK_EVENT) {
     const fb = await getEvent(FALLBACK_EVENT);
     if (fb?.matches.length) {
       S.note = (d ? `${d.name} has no match schedule on The Blue Alliance yet` : `No data for ${S.event} yet (add a TBA API key under Live data, or run fetch-tba.ps1 -EventKey ${S.event})`) +
@@ -411,7 +416,14 @@ function renderPeople(d, team, rows) {
 }
 
 function renderRankings(d, team, basis) {
-  if (!d.rankings.length) { $("rankings").innerHTML = `<p class="empty">No rankings on TBA yet.</p>`; return; }
+  if (!d.rankings.length) {
+    // Before quals: list who is registered instead
+    $("rankings").innerHTML = !d.teamList.length ? `<p class="empty">No rankings on TBA yet.</p>` :
+      `<p class="hint">No rankings on TBA yet. ${d.teamList.length} teams are registered:</p><table><thead><tr><th class="l">Team</th><th class="l">Name</th></tr></thead><tbody>` +
+      d.teamList.map(t => `<tr data-team="${esc(t)}" class="${t === team ? "sel" : ""}"><td class="l team">${esc(t)}</td><td class="l name">${esc(d.teams[t] || "")}</td></tr>`).join("") +
+      `</tbody></table>`;
+    return;
+  }
   const rec = r => r.w == null ? "–" : `${r.w}-${r.l}-${r.t}`;
   $("rankings").innerHTML = `<table><thead><tr><th class="${basis === "Rank" ? "basis" : ""}">Rank</th><th class="l">Team</th><th class="l">Name</th>` +
     d.rankCols.map(c => `<th class="${c === basis ? "basis" : ""}">${esc(c)}</th>`).join("") + `<th>Record</th><th>Played</th></tr></thead><tbody>` +
