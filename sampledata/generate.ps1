@@ -1,5 +1,5 @@
 ﻿# Build sample scouting rows from real 2026ilpe results and write them into the TestData workbook.
-param([string]$Workbook = "D:\JD Projects\DERT\QRCodeTest\DERT_Scouting_REBUILTTestData.xlsx")
+param([string]$Workbook = "D:\JD Projects\DERT\QRCodeTest\DERT_Scouting_REBUILT.xlsx")
 $ErrorActionPreference = "Stop"
 $dir = $PSScriptRoot
 $d = Get-Content "$dir\matches.json" -Raw | ConvertFrom-Json
@@ -165,14 +165,18 @@ try {
   $lo.Resize($ws.Range("A1:$lastCol$($rows.Count + 1)"))
   $ws.Range("A2:$lastCol$($rows.Count + 1)").Value2 = $arr
   $wb.Worksheets.Item("Team Lookup").Range("B3").Value2 = 2040
-  # The real TBA Flat Schedule, pasted the way the data lead would (one line per cell from A5)
-  $flat = @(Get-Content "$dir\tba_flat_schedule_2026ilpe.csv" | Where-Object { $_ })
-  $schedWs = $wb.Worksheets | Where-Object { $_.Name -eq "TBA Schedule" }
-  if ($schedWs -and $flat.Count) {
-    $lines = New-Object 'object[,]' $flat.Count, 1
+  # The real TBA Flat Schedule and Team List, pasted the way the data lead would (one line per cell from A5)
+  $paste = @{ "TBA Schedule" = "tba_flat_schedule_2026ilpe.csv"; "TBA Teams" = "tba_team_list_2026ilpe.csv" }
+  $schedWs = $null
+  foreach ($sheet in $paste.Keys) {
+    $ws2 = $wb.Worksheets | Where-Object { $_.Name -eq $sheet }
+    $csv = @(Get-Content "$dir\$($paste[$sheet])" | Where-Object { $_ })
+    if (-not $ws2 -or -not $csv.Count) { continue }
+    if ($sheet -eq "TBA Schedule") { $schedWs = $ws2 }
+    $lines = New-Object 'object[,]' $csv.Count, 1
     # [string]: Get-Content lines carry PowerShell extras that Excel can't take ("insufficient memory")
-    for ($i = 0; $i -lt $flat.Count; $i++) { $lines[$i, 0] = [string]$flat[$i] }
-    $schedWs.Range("A5:A$($flat.Count + 4)").Value2 = $lines
+    for ($i = 0; $i -lt $csv.Count; $i++) { $lines[$i, 0] = [string]$csv[$i] }
+    $ws2.Range("A5:A$($csv.Count + 4)").Value2 = $lines
   }
   $x.CalculateFull()
   $sum = $wb.Worksheets.Item("Team Summary")
@@ -180,7 +184,7 @@ try {
   "Pick list top 5: " + ((5..9 | ForEach-Object { "$($sum.Range("U$_").Text) ($($sum.Range("V$_").Text))" }) -join ', ')
   if ($schedWs) {
     $chk = $wb.Worksheets.Item("Scouting Check")
-    "Scouting Check: " + ((5..11 | ForEach-Object { $chk.Range("A$_").Text + "=" + $chk.Range("B$_").Text }) -join ", ") + " | " + $chk.Range("A15").Text
+    "Scouting Check: " + ((5..13 | ForEach-Object { $chk.Range("A$_").Text + "=" + $chk.Range("B$_").Text }) -join ", ") + " | " + $chk.Range("A17").Text
   }
   $sum.Activate(); $sum.Range("A5").Select() | Out-Null
   $wb.Save(); $wb.Close($false); "Saved $Workbook"

@@ -155,6 +155,7 @@
     <button type="button" class="btn" id="next">Next match</button>
     <button type="button" class="btn secondary" id="edit">Back to edit</button>
     <button type="button" class="btn" id="backToList" hidden>Back to list</button>
+    <button type="button" class="btn secondary" id="copyRow">Copy row for Excel</button>
     <details>
       <summary>Excel column headers</summary>
       <p>Paste this as row 1 in your Excel sheet (once per event).</p>
@@ -380,6 +381,7 @@
   // ---------- submitted matches: kept on the phone so a QR code can be shown again ----------
   const HISTORY_KEY = "dertScoutHistory", HISTORY_MAX = 200;
   let editingKey = null;   // the submitted match that "Back to edit" is fixing
+  let rowText = "";        // the QR code's values, for "Copy row for Excel"
 
   function loadHistory() {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch (e) { return []; }
@@ -404,6 +406,8 @@
     // Tab-separated: a scanner in keyboard mode types each value into the next Excel cell,
     // and the trailing newline (Enter) moves to the next row.
     const payload = entry.cols.map(c => c[1]).join("\t") + "\n";
+    rowText = payload.slice(0, -1);
+    $("copyRow").textContent = "Copy row for Excel";
 
     qrcode.stringToBytes = qrcode.stringToBytesFuncs["UTF-8"];
     const qr = qrcode(0, "L");
@@ -495,8 +499,29 @@
     renderHistory(); updateHistoryButton();
   });
 
+  // The clipboard API only exists on https; the textarea fallback covers http (serve.ps1) and file://
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.readOnly = true; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.append(ta);
+      ta.select(); ta.setSelectionRange(0, text.length);   // setSelectionRange for iPhone
+      const ok = document.execCommand("copy");
+      ta.remove();
+      if (ok) resolve(); else reject(new Error("copy failed"));
+    });
+  }
+
+  // Same tab-separated values as the QR code: pasted into column A they fill one row, like a scan
+  $("copyRow").addEventListener("click", e => {
+    copyText(rowText)
+      .then(() => e.target.textContent = "Copied! In Excel click the first empty cell in column A, then Ctrl+V")
+      .catch(() => e.target.textContent = "Copy failed – scan the QR code instead");
+  });
+
   $("copyHeaders").addEventListener("click", e => {
-    navigator.clipboard?.writeText($("headers").textContent)
+    copyText($("headers").textContent)
       .then(() => e.target.textContent = "Copied!")
       .catch(() => e.target.textContent = "Copy failed – select the text above");
   });

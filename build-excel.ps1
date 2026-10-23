@@ -53,7 +53,7 @@ try {
   $wb = $x.Workbooks.Add()
   # Manual calculation while building: otherwise Excel is still recalculating when the next call arrives and rejects it
   $x.Calculation = -4135
-  while ($wb.Worksheets.Count -lt 6) { [void]$wb.Worksheets.Add([Type]::Missing, $wb.Worksheets.Item($wb.Worksheets.Count)) }
+  while ($wb.Worksheets.Count -lt 7) { [void]$wb.Worksheets.Add([Type]::Missing, $wb.Worksheets.Item($wb.Worksheets.Count)) }
   $wb.Styles.Item("Normal").Font.Name = "Arial"
   $wb.Styles.Item("Normal").Font.Size = 10
 
@@ -63,6 +63,7 @@ try {
   $look  = $wb.Worksheets.Item(4); $look.Name  = "Team Lookup"
   $check = $wb.Worksheets.Item(5); $check.Name = "Scouting Check"
   $sched = $wb.Worksheets.Item(6); $sched.Name = "TBA Schedule"
+  $teams = $wb.Worksheets.Item(7); $teams.Name = "TBA Teams"
 
   # Long formulas are written over several lines below for reading; Excel gets them on one line
   function OneLine([string]$f) { $f -replace '\r?\n\s*', '' }
@@ -113,6 +114,37 @@ side,LOWER(IFERROR(TEXTBEFORE(TEXTAFTER(t,",",7),","),"")),
 tm,IFERROR(--TEXTBEFORE(TEXTAFTER(t,",",8),","),""),
 keep,ISNUMBER(num)*ISNUMBER(tm)*(lvl="qm")*((side="red")+(side="blue")),
 IFERROR(FILTER(HSTACK(num,PROPER(side),tm),keep),HSTACK("","","")))
+'@
+
+  # ---------------- TBA Teams ----------------
+  # Same idea for TBA's Team List CSV (team_number,team_name,city,state_prov,country,robot_image_url): R5 returns Team # | Name.
+  # A name with a comma comes "quoted" when the paste stays one line per cell. Built early for the same reason as TBA Schedule.
+  Title $teams "DERT #2040 - TBA Teams" "Paste TBA's Team List here so the Scouting Check can spot team numbers that aren't at this event, and Team Lookup can show names." "S"
+  $teams.Range("A4").Value2 = "Paste the Team List here: click the yellow cell, then press Ctrl+V"
+  $teams.Range("A4").Font.Bold = $true
+  $teams.Range("A5").Interior.Color = $YELLOW; $teams.Range("A5").Borders.Weight = 2
+  $teams.Columns.Item(1).ColumnWidth = 62
+  $howTo = @(
+    "HOW TO GET THE TEAM LIST",
+    "1. On thebluealliance.com open your event (for example thebluealliance.com/event/2026iltrr) and click the Scouting tab.",
+    "2. Under Team List, click Copy to Clipboard.",
+    "3. Click the yellow cell A5 on this sheet and press Ctrl+V.",
+    "TBA usually has the team list a week or two before the event. Paste again (over the old one) if teams are added.",
+    "To remove it: select columns A to F from row 5 down and press Delete."
+  )
+  for ($i = 0; $i -lt $howTo.Count; $i++) { $teams.Cells.Item(4 + $i, 10).Value2 = $howTo[$i] }
+  $teams.Range("J4").Font.Bold = $true; $teams.Columns.Item(10).ColumnWidth = 3
+  $teams.Range("R3").Value2 = "Read from the paste (don't type here)"; $teams.Range("R3").Font.Italic = $true; $teams.Range("R3").Font.Color = RGB 120 120 120
+  $teams.Range("R4").Value2 = "Team #"; $teams.Range("S4").Value2 = "Name"
+  HeaderStyle $teams.Range("R4:S4")
+  $teams.Columns.Item(18).ColumnWidth = 10; $teams.Columns.Item(19).ColumnWidth = 36
+  $teams.Range("R5").Formula2 = OneLine @'
+=LET(src,A1:F1000,a,INDEX(src,,1),b,INDEX(src,,2),
+split,b<>"",
+num,IFERROR(--IF(split,a,TEXTBEFORE(a&",",",")),""),
+rest,IFERROR(TEXTAFTER(a,","),""),
+name,IF(split,b,IF(LEFT(rest,1)="""",IFERROR(TEXTBEFORE(MID(rest,2,500),""""),""),IFERROR(TEXTBEFORE(rest&",",","),""))),
+IFERROR(FILTER(HSTACK(num,name),ISNUMBER(num)),HSTACK("","")))
 '@
 
   # ---------------- Scans ----------------
@@ -204,6 +236,8 @@ IFERROR(FILTER(HSTACK(num,PROPER(side),tm),keep),HSTACK("","","")))
   $look.Range("C3").Formula2 = '=IF(B3="","",IFERROR(INDEX(''Team Summary''!F5#,MATCH(B3,''Team Summary''!A5#,0)),""))'
   $look.Range("C3").NumberFormat = '"Avg total: "0.0'
   $look.Range("D3").Formula2 = '=IF(B3="","",IFERROR("Rank "&INDEX(''Team Summary''!R5#,MATCH(B3,''Team Summary''!A5#,0))&" of "&ROWS(''Team Summary''!A5#),"No scans yet"))'
+  $look.Range("E3").Formula2 = '=IF(B3="","",IFERROR(XLOOKUP(B3,INDEX(''TBA Teams''!$R$5#,,1),INDEX(''TBA Teams''!$R$5#,,2),""),""))'
+  $look.Range("E3").Font.Bold = $true
   for ($i = 0; $i -lt $n; $i++) { $look.Cells.Item(5, $i + 1).Value2 = $headers[$i] }
   HeaderStyle $look.Range("A5:$($lastColLetter)5"); $look.Rows.Item(5).RowHeight = 42
   $look.Range("A6").Formula2 = '=IF(B3="","",IFERROR(SORTBY(FILTER(Scans,Scans[Team ''#]=B3),FILTER(Scans[Match ''#],Scans[Team ''#]=B3),1),"No scans for this team yet"))'
@@ -215,29 +249,32 @@ IFERROR(FILTER(HSTACK(num,PROPER(side),tm),keep),HSTACK("","","")))
   $look.Activate(); $x.ActiveWindow.SplitRow = 5; $x.ActiveWindow.FreezePanes = $true
 
   # ---------------- Scouting Check ----------------
-  # One list of problems (A15) built from the Scans table and, once pasted, the TBA schedule; the counts above it read that list.
-  Title $check "DERT #2040 - Scouting Check" "Problems to fix in the Scans sheet. Updates by itself; paste the TBA schedule on the TBA Schedule sheet for the full check." "G"
+  # One list of problems (A17) built from the Scans table and, once pasted, the TBA team list and schedule; the counts above it read that list.
+  Title $check "DERT #2040 - Scouting Check" "Problems to fix in the Scans sheet. Updates by itself; paste TBA's team list and schedule (TBA Teams / TBA Schedule sheets) for the full check." "G"
   $hasSched = 'COUNT(INDEX(''TBA Schedule''!$R$5#,,1))>0'
-  function CountOf($label) { 'COUNTIF(INDEX($A$15#,,1),"' + $label + '")' }
+  $hasTeams = 'COUNT(INDEX(''TBA Teams''!$R$5#,,1))>0'
+  function CountOf($label) { 'COUNTIF(INDEX($A$17#,,1),"' + $label + '")' }
   $summary = @(
     @("Scans", '=COUNTIF(Scans[Team ''#],"<>")', ""),
     @("Duplicate scans (rows)", ('=' + (CountOf "Duplicate scan")), "Same match + team scanned more than once: delete the extra row on the Scans sheet."),
     @("Matches without 6 scans", ('=IF(' + $hasSched + ',"–",' + (CountOf "Not 6 scans") + ')'), "Find the missing scout, or a duplicate. (Replaced by the checks below once the schedule is pasted.)"),
     @("Robots not scouted", ('=IF(' + $hasSched + ',' + (CountOf "Not scouted") + ',"needs schedule")'), "Ask that robot's scout to show the QR code again: Submitted matches in the app."),
     @("Team not in that match", ('=IF(' + $hasSched + ',' + (CountOf "Team not in that match") + ',"needs schedule")'), "Usually a typo in Team #: fix that cell on the Scans sheet."),
+    @("Team not at this event", ('=IF(' + $hasTeams + ',IF(' + $hasSched + ',"–",' + (CountOf "Team not at this event") + '),"needs team list")'), "Usually a typo in Team #: fix that cell on the Scans sheet. (Checked per match instead once the schedule is pasted.)"),
     @("Wrong alliance", ('=IF(' + $hasSched + ',' + (CountOf "Wrong alliance") + ',"needs schedule")'), "Fix the Alliance cell on the Scans sheet."),
-    @("TBA schedule", ('=IF(' + $hasSched + ',COUNT(INDEX(''TBA Schedule''!$R$5#,,1))/6&" qual matches","not pasted yet")'), "See the TBA Schedule sheet.")
+    @("TBA schedule", ('=IF(' + $hasSched + ',COUNT(INDEX(''TBA Schedule''!$R$5#,,1))/6&" qual matches","not pasted yet")'), "See the TBA Schedule sheet."),
+    @("TBA team list", ('=IF(' + $hasTeams + ',COUNT(INDEX(''TBA Teams''!$R$5#,,1))&" teams","not pasted yet")'), "See the TBA Teams sheet.")
   )
   $check.Range("A4").Value2 = "Check"; $check.Range("B4").Value2 = "Found"; $check.Range("C4").Value2 = "What to do"
   HeaderStyle $check.Range("A4:G4")
-  $check.Range("A13").Value2 = "PROBLEMS TO FIX"; $check.Range("A13").Font.Bold = $true; $check.Range("A13").Font.Size = 12
+  $check.Range("A15").Value2 = "PROBLEMS TO FIX"; $check.Range("A15").Font.Bold = $true; $check.Range("A15").Font.Size = 12
   $listHead = @("Problem", "Match #", "Team #", "Alliance", "Excel row", "Scout", "What it means")
-  for ($i = 0; $i -lt $listHead.Count; $i++) { $check.Cells.Item(14, $i + 1).Value2 = $listHead[$i] }
-  HeaderStyle $check.Range("A14:G14")
+  for ($i = 0; $i -lt $listHead.Count; $i++) { $check.Cells.Item(16, $i + 1).Value2 = $listHead[$i] }
+  HeaderStyle $check.Range("A16:G16")
   $cw = @(24, 9, 9, 9, 10, 14, 70)
   for ($i = 0; $i -lt $cw.Count; $i++) { $check.Columns.Item($i + 1).ColumnWidth = $cw[$i] }
-  $check.Range("B15:E3000").HorizontalAlignment = -4108
-  $check.Range("A15").Formula2 = OneLine @'
+  $check.Range("B17:E3000").HorizontalAlignment = -4108
+  $check.Range("A17").Formula2 = OneLine @'
 =LET(ty,Scans[Match type],mt,Scans[Match '#],tm,Scans[Team '#],al,Scans[Alliance],sc,Scans[Scout name],rw,ROW(Scans[Team '#]),
 nT,SEQUENCE(ROWS(tm)),
 has,tm<>"",
@@ -256,18 +293,20 @@ inM,COUNTIFS(sm,mt,st,tm),
 wt,IF(hasSched,FILTER(HSTACK(IF(nT,"Team not in that match"),mt,tm,al,rw,sc,IF(COUNTIFS(sm,mt)>0,"Typo in Team #? Check the schedule for this match","There is no such qual match on the TBA schedule")),qual*(inM=0),""),""),
 inA,COUNTIFS(sm,mt,st,tm,sa,al),
 wa,IF(hasSched,FILTER(HSTACK(IF(nT,"Wrong alliance"),mt,tm,al,rw,sc,"The schedule says "&XLOOKUP(mt&"|"&tm,sm&"|"&st,sa,"?")),qual*(inM>0)*(inA=0),""),""),
-all,VSTACK(dup,cnt,miss,wt,wa),
-IFERROR(FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE)),"✓ Nothing to fix"))
+tl,'TBA Teams'!$R$5#,tn,INDEX(tl,,1),hasTeams,COUNT(tn)>0,
+ne,IF(hasTeams*NOT(hasSched),FILTER(HSTACK(IF(nT,"Team not at this event"),mt,tm,al,rw,sc,IF(nT,"Not on TBA's team list for this event: typo in Team #?")),has*(COUNTIFS(tn,tm)=0),""),""),
+all,VSTACK(dup,cnt,miss,wt,ne,wa),
+FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE),"✓ Nothing to fix"))
 '@
-  # The counts read the list in A15, so they go in after it
+  # The counts read the list in A17, so they go in after it
   for ($i = 0; $i -lt $summary.Count; $i++) {
     $check.Cells.Item(5 + $i, 1).Value2 = $summary[$i][0]; $check.Cells.Item(5 + $i, 1).Font.Bold = $true
     $check.Cells.Item(5 + $i, 2).Formula2 = $summary[$i][1]; $check.Cells.Item(5 + $i, 2).HorizontalAlignment = -4108
     $check.Cells.Item(5 + $i, 3).Value2 = $summary[$i][2]
   }
   # Counts: red when above 0, green at 0 (cell-value rules, so no function names that differ by Excel language)
-  $fc = $check.Range("B6:B10").FormatConditions.Add(1, 1, "=1", "=1E+307"); $fc.Interior.Color = RGB 255 199 206; $fc.Font.Color = RGB 156 0 6
-  $fc = $check.Range("B6:B10").FormatConditions.Add(1, 3, "=0"); $fc.Interior.Color = RGB 198 239 206; $fc.Font.Color = RGB 0 97 0
+  $fc = $check.Range("B6:B11").FormatConditions.Add(1, 1, "=1", "=1E+307"); $fc.Interior.Color = RGB 255 199 206; $fc.Font.Color = RGB 156 0 6
+  $fc = $check.Range("B6:B11").FormatConditions.Add(1, 3, "=0"); $fc.Interior.Color = RGB 198 239 206; $fc.Font.Color = RGB 0 97 0
 
   # ---------------- Instructions ----------------
   Title $info "DERT #2040 - REBUILT Scouting Workbook" "Import data from the DERT Scout web app (index.html) by scanning its QR codes." "J"
@@ -284,7 +323,8 @@ IFERROR(FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE)),"✓ Nothing to fix"))
     @("3","Repeat for every QR code. Keep scanning - the table grows by itself."),
     @("4","Made a mistake? Delete the whole row (right-click row number > Delete) and scan again."),
     @("h","CHECKING THE DATA"),
-    @("1","Once TBA has the match schedule (usually the day before quals), paste it on the TBA Schedule sheet - the steps are on that sheet."),
+    @("1","Once TBA has the team list (a week or two before the event), paste it on the TBA Teams sheet. Once it has the match schedule"),
+    @("", "   (usually the day before quals), paste it on the TBA Schedule sheet. The steps are on those sheets."),
     @("2","Every few matches, open the Scouting Check sheet. Red numbers = something to fix; the list below them says what and in which Excel row."),
     @("h","SHEETS"),
     @("-","Scans - raw data, one row per robot per match. Do not change the column headers or their order."),
@@ -292,11 +332,12 @@ IFERROR(FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE)),"✓ Nothing to fix"))
     @("-","Team Lookup - type a team number in the yellow cell to see every match and all observations for that team."),
     @("-","Scouting Check - duplicate scans, matches without 6 scans and, with the TBA schedule, unscouted robots, team-number typos and wrong alliances."),
     @("-","TBA Schedule - paste TBA's Flat Schedule here. Nothing else to type."),
+    @("-","TBA Teams - paste TBA's Team List here: catches team numbers that aren't at the event, and Team Lookup shows the team's name."),
     @("h","LEGEND"),
     @("-","Teal header = column names (must match the web app).   Yellow cell = type here.   Everything else is calculated or scanned - don't edit."),
     @("-","Points: fuel in active Hub = 1 pt. Tower Level 1 = 15 pts in auto / 10 pts in teleop, Level 2 = 20, Level 3 = 30 (2026 REBUILT Game Manual, Table 6-4)."),
     @("-","Ratings (Driver skill, Robot speed, Shooting accuracy) are 1 = poor to 5 = great. Multi-choice answers are separated by '; '."),
-    @("-","Requires Microsoft 365 / Excel 2021 or newer (uses UNIQUE, SORTBY, FILTER, HSTACK)."),
+    @("-","Requires Microsoft 365 or Excel 2024 (uses FILTER, SORTBY, HSTACK, VSTACK, TEXTBEFORE). Excel 2021 and older show #NAME? errors."),
     @("-","Schema (column A) is filled in by every QR code ($schema for this workbook). A RED row came from a different version"),
     @("", "   of the scouting form, so its answers are in the wrong columns: delete it, update the app on that phone (open it on Wi-Fi), scan again."),
     @("h","IF YOU CHANGE THE WEB FORM"),
@@ -346,8 +387,8 @@ IFERROR(FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE)),"✓ Nothing to fix"))
     for ($rr = 5; $rr -le 6; $rr++) { ($sum.Range("T$($rr):AC$($rr)").Value2 | ForEach-Object { $_ }) -join " | " }
     "Lookup: " + $look.Range("C3").Text + " / " + $look.Range("D3").Text + " / Match # col C: " + $look.Range("C6").Text + ", " + $look.Range("C7").Text + " / A8: " + $look.Range("A8").Text
     "Table rows: " + $lo.ListRows.Count
-    "Scouting Check: " + ((5..11 | ForEach-Object { $check.Range("A$_").Text + "=" + $check.Range("B$_").Text }) -join ", ")
-    "  first problem: " + (($check.Range("A15:G15").Value2 | ForEach-Object { $_ }) -join " | ")
+    "Scouting Check: " + ((5..13 | ForEach-Object { $check.Range("A$_").Text + "=" + $check.Range("B$_").Text }) -join ", ")
+    "  first problem: " + (($check.Range("A17:G17").Value2 | ForEach-Object { $_ }) -join " | ")
   }
 
   # Back to automatic so the saved workbook updates by itself
