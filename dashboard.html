@@ -95,7 +95,7 @@
   .marks button { padding: 2px 7px; font-size: .72rem; }
 
   /* team detail */
-  .detail-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .detail-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
   .detail-head .big { font-size: 1.8rem; font-weight: 700; }
   .mini { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
   .mini div { background: var(--page); border-radius: 8px; padding: 8px 10px; }
@@ -153,7 +153,15 @@
   /* TBA team list and schedule combined with the scans */
   .tname { display: block; font-weight: 400; font-size: .72rem; color: var(--text-2); max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
   .tinfo { color: var(--text-2); font-size: .85rem; }
-  .robot { height: 72px; max-width: 120px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
+  .robot { height: 72px; max-width: 120px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); cursor: zoom-in; }
+  /* big robot photo on top of the page, like TBA's */
+  .lightbox { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
+  .lightbox[hidden] { display: none; }
+  .lightbox figure { margin: 0; text-align: center; }
+  .lightbox img { max-width: 92vw; max-height: 82vh; border-radius: 8px; background: #222; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  .lightbox figcaption { color: #f9f9f9; margin-top: 10px; font-size: .9rem; }
+  .lightbox figcaption a { color: #7fe0dc; }
+  .lightbox button { position: absolute; top: 14px; right: 16px; color: #f9f9f9; border-color: #f9f9f9; }
   #unscouted { margin: 10px 0 0; }
   .sched td, .sched th { font-size: .8rem; }
   .sched .red { color: var(--bad); } .sched .blue { color: var(--s1); }
@@ -268,6 +276,13 @@
   </section>
 </div>
 <div class="tip" id="tip" hidden></div>
+<div class="lightbox" id="lightbox" hidden>
+  <figure>
+    <img id="lightboxImg" alt="" referrerpolicy="no-referrer">
+    <figcaption><span id="lightboxCap"></span> · <a id="lightboxFull" target="_blank" rel="noopener">Full size ↗</a></figcaption>
+  </figure>
+  <button class="ghost" aria-label="Close">✕</button>
+</div>
 
 <script>
 // ---------------------------------------------------------------- columns (must match index.html / Excel headers)
@@ -338,6 +353,7 @@ const S = {
   sx: store.get("sx", "auto"), sy: store.get("sy", "tele"), boxMetric: store.get("boxMetric", "total"),
   isSample: false, tbaEvent: DEFAULT_EVENT, tba: null,   // tba: schedule, scores and rankings
   prior: null,                                           // last year's edition of the event: team -> rank
+  photos: {},                                            // team -> robot photo from our event's saved TBA data
   ally: store.get("ally", ["", "", ""]),                 // alliance builder: captain, 1st pick, 2nd pick
 };
 
@@ -513,6 +529,22 @@ async function loadTba() {
   renderCheck(); renderSleepers(); renderTiles(); renderTable(); renderDetail();
 }
 const teamName = team => S.tba?.teams[team] || "";
+// The current event's photo, else the one saved for our event (data/event.js): live TBA data and other events may have none
+const robotPhoto = team => S.tba?.info[team]?.img || S.photos[team] || "";
+// TBA's team list gives imgur thumbnails (…/VLKYCJEm.jpg: id + size letter). Without the letter it's the original;
+// "h" is the 1024 px version, quick enough for event Wi-Fi.
+function imgurSizes(url) {
+  const m = /^https:\/\/i\.imgur\.com\/([A-Za-z0-9]+)\.(\w+)$/.exec(url);
+  if (!m) return { big: url, full: url };
+  let id = m[1];
+  if ((id.length === 6 || id.length === 8) && "smtlbh".includes(id.at(-1))) id = id.slice(0, -1);   // imgur ids are 5 or 7 long
+  return { big: `https://i.imgur.com/${id}h.jpg`, full: `https://i.imgur.com/${id}.${m[2]}` };
+}
+async function loadPhotos() {
+  const d = await tbaSnapshot(DEFAULT_EVENT);
+  S.photos = Object.fromEntries(Object.entries(d?.info || {}).filter(([, i]) => i.img).map(([team, i]) => [team, i.img]));
+  renderDetail();
+}
 
 function scoutingCheck() {
   const qual = r => String(r[C.type] || "Qual") === "Qual";
@@ -759,20 +791,20 @@ function renderDetail() {
   const chips = key => { const c = counts(key); return c.length ? c.map(([v, n]) => `<span class="chip">${esc(v)} <b>${n}</b></span>`).join("") : '<span class="chip">–</span>'; };
   const notes = t.rows.filter(r => String(r[C.notes]).trim() || String(r[C.problems]).trim())
     .map(r => `<li><span class="m">Q${esc(r[C.match])} · ${esc(r[C.scout])}</span>${esc(r[C.notes])}${String(r[C.problems]).trim() ? ` <span class="tag dnp">${esc(r[C.problems])}</span>` : ""}</li>`).reverse().join("");
-  // Name, home town and robot photo from TBA's team list
-  const info = S.tba?.info[t.team] || {}, place = [info.city, info.state].filter(Boolean).join(", ");
-  const who = teamName(t.team) || place || info.img ? `<div class="detail-head">` +
-    (info.img ? `<a href="${esc(info.img)}" target="_blank" rel="noopener"><img class="robot" src="${esc(info.img)}" alt="Robot of team ${esc(t.team)}" loading="lazy" referrerpolicy="no-referrer"></a>` : "") +
-    `<div><b>${esc(teamName(t.team))}</b>${place ? `<br><span class="tinfo">${esc(place)}</span>` : ""}</div></div>` : "";
+  // Robot photo, name and home town from TBA's team list
+  const info = S.tba?.info[t.team] || {}, place = [info.city, info.state].filter(Boolean).join(", "), photo = robotPhoto(t.team);
   card.innerHTML = `
     <div class="detail-head">
-      <h2 style="margin:0">Team <span class="big">${esc(t.team)}</span></h2>
+      ${photo ? `<a href="${esc(imgurSizes(photo).full)}" data-photo="${esc(t.team)}" title="Click for a bigger photo"><img class="robot" src="${esc(photo)}" alt="Robot of team ${esc(t.team)}" referrerpolicy="no-referrer"></a>` : ""}
+      <div>
+        <h2 style="margin:0">Team <span class="big">${esc(t.team)}</span></h2>
+        ${teamName(t.team) || place ? `<div class="tinfo"><b>${esc(teamName(t.team))}</b>${teamName(t.team) && place ? " · " : ""}${esc(place)}</div>` : ""}
+      </div>
       <span class="chip">Rank <b>#${t.rank}</b> of ${T.length}</span><span class="chip">Score <b>${t.score.toFixed(0)}</b></span>
       <span class="chip">${t.n} matches${S.win ? " (last " + S.win + ")" : ""}</span>
       ${S.prior ? `<span class="chip" title="Last year's edition of this event">Last year: <b>${esc(priorText(t.team))}</b></span>` : ""}
       <select id="teamSelect" style="margin-left:auto">${[...T].sort((a, b) => a.team - b.team).map(x => `<option ${x.team === t.team ? "selected" : ""}>${x.team}</option>`).join("")}</select>
     </div>
-    ${who}
     <div class="mini">
       <div><div class="k">Avg total pts</div><div class="v">${f1(t.total)}</div>${d(t.total, T.avg.total, f1)}</div>
       <div><div class="k">Auto pts</div><div class="v">${f1(t.auto)}</div>${d(t.auto, T.avg.auto, f1)}</div>
@@ -1151,6 +1183,29 @@ document.addEventListener("change", e => {
   if (e.target.id === "teamSelect") { S.sel = e.target.value; renderTeamViews(); }
   if (e.target.id === "cmpAdd" && e.target.value) addCompare(e.target.value);
 });
+// Robot photo: click the thumbnail for a big version on top of the page, like TBA (ctrl-click still opens a tab)
+function openPhoto(team) {
+  const thumb = robotPhoto(team); if (!thumb) return;
+  const { big, full } = imgurSizes(thumb), img = $("lightboxImg");
+  img.dataset.team = team; img.alt = "Robot of team " + team;
+  img.src = thumb;   // the thumbnail right away, swapped for the big one once it has loaded
+  const pre = new Image();
+  pre.referrerPolicy = "no-referrer";
+  pre.onload = () => { if (img.dataset.team === team) img.src = big; };
+  pre.src = big;
+  $("lightboxCap").textContent = `Team ${team}` + (teamName(team) ? ` – ${teamName(team)}` : "");
+  $("lightboxFull").href = full;
+  $("lightbox").hidden = false;
+}
+function closePhoto() { $("lightbox").hidden = true; delete $("lightboxImg").dataset.team; $("lightboxImg").removeAttribute("src"); }
+$("detailCard").addEventListener("click", e => {
+  const a = e.target.closest("a[data-photo]");
+  if (!a || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  e.preventDefault(); openPhoto(a.dataset.photo);
+});
+$("lightbox").onclick = e => { if (e.target.id !== "lightboxFull") closePhoto(); };
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("lightbox").hidden) closePhoto(); });
+
 $("comparePick").onclick = e => { const b = e.target.closest("button[data-rm]"); if (!b) return; S.compare = S.compare.filter(t => t !== b.dataset.rm); store.set("compare", S.compare); renderCompare(); renderScatter(); renderPhases(); renderBoxes(); renderSleepers(); };
 const openTeam = e => { const c = e.target.closest("[data-team]"); if (!c) return; S.sel = c.dataset.team; renderTeamViews(); };
 ["scatter", "phases", "boxes", "sleeperChart", "sleeperTable"].forEach(id => $(id).onclick = openTeam);
@@ -1203,6 +1258,7 @@ let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTime
   if (last === "file" && file) { useSource(false); setData(file.headers, file.rows, file.name); }
   else if (window.SAMPLE_DATA) loadSample();
   else { render(); renderCheck(); }
+  loadPhotos();
 })();
 </script>
 </body>
