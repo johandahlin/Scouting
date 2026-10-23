@@ -185,8 +185,10 @@
 </div>
 <div class="tip" id="tip" hidden></div>
 
+<script src="data/event.js"></script>
 <script>
-const DEFAULT_EVENT = "2026iltrr";   // Roboteer Rumble
+// Our event, set in data/event.js (shared with the dashboard). ?event=... in the address shows another one.
+const DEFAULT_EVENT = window.DERT_EVENT || "2026iltrr";
 // Shown instead while the chosen event has no match schedule on TBA yet
 const FALLBACK_EVENT = "2026ilpe";
 const API = "https://www.thebluealliance.com/api/v3";
@@ -202,12 +204,13 @@ const store = {
 };
 const params = new URLSearchParams(location.search);
 const S = {
-  event: (params.get("event") || store.get("event", DEFAULT_EVENT)).toLowerCase(),
+  event: (params.get("event") || DEFAULT_EVENT).toLowerCase(),
   team: params.get("team") || store.get("team", "2040"),
   apiKey: store.get("apiKey", ""),
   basis: store.get("basis", "Avg Match"),
   level: "all",
   d: null, note: "", error: "",
+  prior: null,   // last year's edition of the event: team -> rank
 };
 
 const $ = id => document.getElementById(id);
@@ -274,6 +277,19 @@ async function getEvent(key) {
   const d = await loadSnapshot(key);
   return d && prep(d);
 }
+// Last year's edition of the same event (2026iltrr -> 2025iltrr): each team's rank and average there.
+// A different game, so only a rough guide.
+const priorKey = key => (parseInt(key) - 1) + key.replace(/^\d+/, "");
+async function getPrior(eventKey) {
+  const key = priorKey(eventKey);
+  let d = null;
+  if (S.apiKey) { try { d = await loadLive(key); } catch (e) { /* no such event or offline: try the snapshot */ } }
+  d ||= await loadSnapshot(key);
+  if (!d?.rankings?.length) return null;
+  const ai = d.rankCols.indexOf("Avg Match");
+  return { key, name: d.name, n: d.rankings.length,
+    of: Object.fromEntries(d.rankings.map(r => [tn(r.team), { rank: r.rank, avg: ai >= 0 ? r.vals[ai] : null }])) };
+}
 async function load() {
   S.error = ""; S.note = "";
   $("srcText").textContent = "Loading…";
@@ -291,8 +307,12 @@ async function load() {
       d = fb;
     }
   }
-  S.d = d;
+  S.d = d; S.prior = null;
   render();
+  if (d) {
+    const p = await getPrior(d.key);
+    if (S.d === d && p) { S.prior = p; render(); }
+  }
 }
 
 // ---------------------------------------------------------------- prediction
@@ -416,19 +436,27 @@ function renderPeople(d, team, rows) {
 }
 
 function renderRankings(d, team, basis) {
+  // Last year's rank (and average, that year's game) when the previous edition of the event is on TBA
+  const p = S.prior;
+  const lastTip = t => { const x = p.of[t]; return x ? `${p.name}: #${x.rank} of ${p.n}` + (x.avg != null ? `, ${Math.round(x.avg)} pts/match (that year's game)` : "") : `Not at ${p.name}`; };
+  const lastRank = t => p ? `<td title="${esc(lastTip(t))}">${p.of[t] ? "#" + p.of[t].rank : "–"}</td>` : "";
+  const lastHead = p ? `<th title="Rank at ${esc(p.name)}">Last yr</th>` : "";
   if (!d.rankings.length) {
     // Before quals: list who is registered instead
+    const avg = t => p ? `<td>${p.of[t]?.avg != null ? Math.round(p.of[t].avg) : "–"}</td>` : "";
     $("rankings").innerHTML = !d.teamList.length ? `<p class="empty">No rankings on TBA yet.</p>` :
-      `<p class="hint">No rankings on TBA yet. ${d.teamList.length} teams are registered:</p><table><thead><tr><th class="l">Team</th><th class="l">Name</th></tr></thead><tbody>` +
-      d.teamList.map(t => `<tr data-team="${esc(t)}" class="${t === team ? "sel" : ""}"><td class="l team">${esc(t)}</td><td class="l name">${esc(d.teams[t] || "")}</td></tr>`).join("") +
+      `<p class="hint">No rankings on TBA yet. ${d.teamList.length} teams are registered` +
+      (p ? `. Last yr = their rank and average match score at ${esc(p.name)}: a different game, so only a rough guide.` : ":") + `</p>` +
+      `<table><thead><tr><th class="l">Team</th><th class="l">Name</th>${lastHead}${p ? `<th title="Average match score at ${esc(p.name)} (that year's game)">Last yr avg</th>` : ""}</tr></thead><tbody>` +
+      d.teamList.map(t => `<tr data-team="${esc(t)}" class="${t === team ? "sel" : ""}"><td class="l team">${esc(t)}</td><td class="l name">${esc(d.teams[t] || "")}</td>${lastRank(t)}${avg(t)}</tr>`).join("") +
       `</tbody></table>`;
     return;
   }
   const rec = r => r.w == null ? "–" : `${r.w}-${r.l}-${r.t}`;
   $("rankings").innerHTML = `<table><thead><tr><th class="${basis === "Rank" ? "basis" : ""}">Rank</th><th class="l">Team</th><th class="l">Name</th>` +
-    d.rankCols.map(c => `<th class="${c === basis ? "basis" : ""}">${esc(c)}</th>`).join("") + `<th>Record</th><th>Played</th></tr></thead><tbody>` +
+    d.rankCols.map(c => `<th class="${c === basis ? "basis" : ""}">${esc(c)}</th>`).join("") + `<th>Record</th><th>Played</th>${lastHead}</tr></thead><tbody>` +
     d.rankings.map(r => `<tr data-team="${esc(r.team)}" class="${r.team === team ? "sel" : ""}"><td>${r.rank}</td><td class="l team">${esc(r.team)}</td><td class="l name">${esc(d.teams[r.team] || "")}</td>` +
-      r.vals.map(v => `<td>${v == null ? "–" : +v.toFixed(2)}</td>`).join("") + `<td>${rec(r)}</td><td>${r.played ?? "–"}</td></tr>`).join("") +
+      r.vals.map(v => `<td>${v == null ? "–" : +v.toFixed(2)}</td>`).join("") + `<td>${rec(r)}</td><td>${r.played ?? "–"}</td>${lastRank(r.team)}</tr>`).join("") +
     `</tbody></table>`;
 }
 
@@ -441,7 +469,7 @@ function selectTeam(t) {
 function loadEventFromInput() {
   const key = $("eventKey").value.trim().toLowerCase();
   if (!/^\d{4}[a-z0-9]+$/.test(key)) { S.error = `"${key}" is not a TBA event key (like 2026iltrr).`; render(); return; }
-  S.event = key; store.set("event", key);
+  S.event = key;
   history.replaceState(null, "", `?event=${encodeURIComponent(key)}`);
   load();
 }

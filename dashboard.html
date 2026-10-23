@@ -11,6 +11,7 @@
 <link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700|Roboto+Serif:700,900&display=swap" rel="stylesheet">
 <script src="xlsx.full.min.js"></script>
 <script src="data/sample-ilpe2026.js"></script>
+<script src="data/event.js"></script>
 <style>
   /* Brand from dert2040.org; chart palette from the validated reference palette (slots 1-3) */
   :root {
@@ -148,6 +149,15 @@
   .mini .d.warn { color: var(--bad); font-weight: 500; }
   .scroll { max-height: 400px; overflow: auto; }
   .add { padding: 2px 10px; font-size: .75rem; }
+
+  /* TBA team list and schedule combined with the scans */
+  .tname { display: block; font-weight: 400; font-size: .72rem; color: var(--text-2); max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+  .tinfo { color: var(--text-2); font-size: .85rem; }
+  .robot { height: 72px; max-width: 120px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border); }
+  #unscouted { margin: 10px 0 0; }
+  .sched td, .sched th { font-size: .8rem; }
+  .sched .red { color: var(--bad); } .sched .blue { color: var(--s1); }
+  .sched .miss { color: var(--bad); }
   .clash { color: var(--bad); }
 </style>
 </head>
@@ -199,10 +209,11 @@
 
   <section class="card">
     <h2>Pick List</h2>
-    <p class="hint">Score 0–100 = weighted mix of each team's stats, each scaled from worst (0) to best (100) at this event. Drag the sliders to match your strategy. Click a row for details; ✓ marks a team as picked, ✕ as do-not-pick (saved in this browser).</p>
+    <p class="hint">Score 0–100 = weighted mix of each team's stats, each scaled from worst (0) to best (100) at this event. Drag the sliders to match your strategy. Click a row for details; ✓ marks a team as picked, ✕ as do-not-pick (saved in this browser). <b>Last yr</b> (when TBA has it) = the team's rank at last year's edition of this event: a different game, so only a rough guide.</p>
     <div class="presets" id="presets"></div>
     <div class="weights" id="weights"></div>
     <div class="tablewrap"><table id="rankTable"></table></div>
+    <p class="hint" id="unscouted"></p>
   </section>
 
   <div class="grid2">
@@ -308,7 +319,8 @@ const STATS = {
 };
 // Per-match columns the consistency chart can show
 const PER_MATCH = { total: ["Total pts", C.total], auto: ["Auto pts", C.autoPts], tele: ["Teleop fuel", C.telePts], climb: ["Climb pts", C.climbPts] };
-const SAMPLE_EVENT = "2026ilpe", DEFAULT_EVENT = "2026iltrr";
+// The workbook's scans are combined with this TBA event (set in data/event.js); the sample data is from 2026ilpe
+const SAMPLE_EVENT = "2026ilpe", DEFAULT_EVENT = window.DERT_EVENT || "2026iltrr";
 
 // ---------------------------------------------------------------- state
 const store = {
@@ -325,6 +337,7 @@ const S = {
   ours: store.get("ours", "2040"),
   sx: store.get("sx", "auto"), sy: store.get("sy", "tele"), boxMetric: store.get("boxMetric", "total"),
   isSample: false, tbaEvent: DEFAULT_EVENT, tba: null,   // tba: schedule, scores and rankings
+  prior: null,                                           // last year's edition of the event: team -> rank
   ally: store.get("ally", ["", "", ""]),                 // alliance builder: captain, 1st pick, 2nd pick
 };
 
@@ -399,12 +412,10 @@ function setData(headers, rows, name) {
   render();
   loadTba();
 }
-// The sample data is from 2026ilpe; a real workbook uses the event picked here or on the match predictor page
 function useSource(sample) {
   S.isSample = sample;
-  S.tbaEvent = sample ? SAMPLE_EVENT : store.get("tbaEvent", null) || matchesPageEvent() || DEFAULT_EVENT;
+  S.tbaEvent = sample ? SAMPLE_EVENT : DEFAULT_EVENT;
 }
-function matchesPageEvent() { try { return JSON.parse(localStorage.getItem("dertMatch.event")); } catch (e) { return null; } }
 function loadSample() {
   if (!window.SAMPLE_DATA) return alertBox("Sample data file (data/sample-ilpe2026.js) not found.");
   useSource(true);
@@ -447,30 +458,61 @@ function tbaSnapshot(key) {
 async function tbaLive(key, apiKey) {
   const get = path => fetch(`${TBA_API}/event/${key}${path}`, { headers: { "X-TBA-Auth-Key": apiKey } })
     .then(r => { if (!r.ok) throw new Error("TBA error " + r.status); return r.json(); });
-  const [matches, rk] = await Promise.all([get("/matches/simple"), get("/rankings").catch(() => null)]);   // no rankings before quals start
+  const [matches, rk, teams] = await Promise.all([get("/matches/simple"), get("/rankings").catch(() => null), get("/teams/simple").catch(() => [])]);   // no rankings before quals start
   const score = a => a.score >= 0 ? a.score : null;   // TBA sends -1 until the match is played
   return { key, live: true,
     rankings: (rk?.rankings || []).map(r => ({ rank: r.rank, team: r.team_key })),
+    teams: Object.fromEntries(teams.map(t => [String(t.team_number), t.nickname])),
+    info: Object.fromEntries(teams.map(t => [String(t.team_number), { city: t.city, state: t.state_prov }])),   // robot photos only come with the snapshot
     matches: matches.map(m => ({
-      level: m.comp_level, num: m.match_number, red: m.alliances.red.team_keys, blue: m.alliances.blue.team_keys,
-      redScore: score(m.alliances.red), blueScore: score(m.alliances.blue),
+      level: m.comp_level, set: m.set_number, num: m.match_number, red: m.alliances.red.team_keys, blue: m.alliances.blue.team_keys,
+      redScore: score(m.alliances.red), blueScore: score(m.alliances.blue), time: m.actual_time || m.predicted_time || m.time,
     })) };
 }
+function savedApiKey() { try { return JSON.parse(localStorage.getItem("dertMatch.apiKey") || '""'); } catch (e) { return ""; } }
+
+// Last year's edition of the same event (2026iltrr -> 2025iltrr): each team's rank there, as a rough guide.
+// A different game, so its points aren't comparable to this year's.
+const priorKey = key => (parseInt(key) - 1) + key.replace(/^\d+/, "");
+async function loadPrior() {
+  const key = priorKey(S.tbaEvent), apiKey = savedApiKey();
+  S.prior = null;
+  let d = null;
+  if (apiKey) {
+    try {
+      const rk = await fetch(`${TBA_API}/event/${key}/rankings`, { headers: { "X-TBA-Auth-Key": apiKey } }).then(r => r.ok ? r.json() : null);
+      if (rk?.rankings?.length) d = { name: key, rankCols: rk.sort_order_info.map(s => s.name), rankings: rk.rankings.map(r => ({ rank: r.rank, team: r.team_key, vals: r.sort_orders })) };
+    } catch (e) { /* offline: use the snapshot */ }
+  }
+  d ||= await tbaSnapshot(key);
+  if (key !== priorKey(S.tbaEvent) || !d?.rankings?.length) { renderTable(); renderDetail(); return; }
+  const ai = d.rankCols.indexOf("Avg Match");
+  S.prior = { key, name: d.name || key, n: d.rankings.length,
+    of: Object.fromEntries(d.rankings.map(r => [tn(r.team), { rank: r.rank, avg: ai >= 0 ? r.vals[ai] : null }])) };
+  renderTable(); renderDetail();
+}
+const priorText = t => {
+  const p = S.prior?.of[t];
+  return p ? `${S.prior.name}: #${p.rank} of ${S.prior.n}` + (p.avg != null ? ` · ${Math.round(p.avg)} pts/match (that year's game)` : "") : `Not at ${S.prior?.name}`;
+};
+
 async function loadTba() {
   const key = S.tbaEvent;
   S.tba = null; renderCheck(); renderSleepers();
-  let apiKey = "";
-  try { apiKey = JSON.parse(localStorage.getItem("dertMatch.apiKey") || '""'); } catch (e) {}
+  loadPrior();
+  const apiKey = savedApiKey();
   let d = null;
   if (apiKey) { try { d = await tbaLive(key, apiKey); } catch (e) { /* offline or bad key: use the snapshot */ } }
   d ||= await tbaSnapshot(key);
   if (key !== S.tbaEvent) return;   // another event was picked meanwhile
-  const quals = (d?.matches || []).filter(m => m.level === "qm")
-    .map(m => ({ ...m, red: m.red.map(tn), blue: m.blue.map(tn) }));
+  const matches = (d?.matches || []).map(m => ({ ...m, red: m.red.map(tn), blue: m.blue.map(tn) }));
   const ranks = Object.fromEntries((d?.rankings || []).map(r => [tn(r.team), r.rank]));
-  S.tba = { key, name: d?.name || key, live: !!d?.live, quals, ranks };
-  renderCheck(); renderSleepers();
+  // teams: number -> name; info: number -> home town and robot photo (from TBA's Team List)
+  S.tba = { key, name: d?.name || key, live: !!d?.live, matches, quals: matches.filter(m => m.level === "qm"), ranks,
+    teams: d?.teams || {}, info: d?.info || {} };
+  renderCheck(); renderSleepers(); renderTiles(); renderTable(); renderDetail();
 }
+const teamName = team => S.tba?.teams[team] || "";
 
 function scoutingCheck() {
   const qual = r => String(r[C.type] || "Qual") === "Qual";
@@ -636,7 +678,7 @@ function renderTiles() {
   const top = [...T].sort((a, b) => a.rank - b.rank)[0];
   const ours = T.find(t => t.team === S.ours);
   const tiles = [
-    ["Teams scouted", T.length, matches + " matches · " + rows.length + " scans"],
+    ["Teams scouted", T.length, (S.tba && Object.keys(S.tba.teams).length ? `of ${Object.keys(S.tba.teams).length} at ${S.tba.name} · ` : matches + " matches · ") + rows.length + " scans"],
     ["Avg robot points", T.avg.total.toFixed(1), "per match, all teams"],
     ["Top pick", top ? top.team : "–", top ? "score " + top.score.toFixed(0) + " · " + top.total.toFixed(1) + " pts/match" : ""],
     ["Best single match", T.max.best, (T.find(t => t.best === T.max.best) || {}).team ? "Team " + T.find(t => t.best === T.max.best).team : ""],
@@ -670,18 +712,25 @@ const COLS = [
   { key: "best", label: "Best", get: t => t.best },
   { key: "n", label: "Matches", get: t => t.n },
 ];
+// Shown only when last year's edition of the event is on TBA; teams that weren't there sort last
+const PRIOR_COL = { key: "prior", label: "Last yr", get: t => S.prior?.of[t.team]?.rank ?? Infinity };
 function renderTable() {
+  renderUnscouted();
   if (!T.length) { $("rankTable").innerHTML = `<tr><td class="empty">No teams yet.</td></tr>`; return; }
-  const col = COLS.find(c => c.key === S.sort.key) || COLS[2];
+  const cols = S.prior ? [...COLS, PRIOR_COL] : COLS;
+  const col = cols.find(c => c.key === S.sort.key) || COLS[2];
   let rows = [...T].sort((a, b) => (col.get(a) - col.get(b)) * S.sort.dir || a.rank - b.rank);
   if (S.search) rows = rows.filter(t => t.team.includes(S.search));
   const maxScore = Math.max(1, ...T.map(t => t.score));
-  const head = `<thead><tr>${COLS.map(c => `<th class="${c.cls || ""} ${c.key === S.sort.key ? "sorted" + (S.sort.dir > 0 ? " asc" : "") : ""}" data-sort="${c.key}">${c.label}</th>`).join("")}<th class="l">Mark</th></tr></thead>`;
+  const head = `<thead><tr>${cols.map(c => `<th class="${c.cls || ""} ${c.key === S.sort.key ? "sorted" + (S.sort.dir > 0 ? " asc" : "") : ""}" data-sort="${c.key}"` +
+    (c.key === "prior" ? ` title="Rank at ${esc(S.prior.name)}"` : "") + `>${c.label}</th>`).join("")}<th class="l">Mark</th></tr></thead>`;
   const body = rows.map(t => {
     const mark = S.marks[t.team];
-    const cells = COLS.map(c => {
+    const cells = cols.map(c => {
       const v = c.get(t);
-      if (c.key === "team") return `<td class="team l">${esc(t.team)}${t.team === S.ours ? '<span class="tag us">us</span>' : ""}${mark === "dnp" ? '<span class="tag dnp">avoid</span>' : ""}${mark === "picked" ? '<span class="tag picked">picked</span>' : ""}</td>`;
+      if (c.key === "prior") return `<td title="${esc(priorText(t.team))}">${v === Infinity ? "–" : "#" + v}</td>`;
+      if (c.key === "team") return `<td class="team l">${esc(t.team)}${t.team === S.ours ? '<span class="tag us">us</span>' : ""}${mark === "dnp" ? '<span class="tag dnp">avoid</span>' : ""}${mark === "picked" ? '<span class="tag picked">picked</span>' : ""}` +
+        (teamName(t.team) ? `<span class="tname">${esc(teamName(t.team))}</span>` : "") + `</td>`;
       if (c.key === "score") return `<td><span class="scorebar"><i style="width:${Math.max(2, 70 * v / maxScore)}px"></i>${v.toFixed(0)}</span></td>`;
       const tint = c.heat ? `style="background:color-mix(in srgb, var(--heat) ${Math.round(T.pctOf[c.key](v) * 45)}%, transparent)"` : "";
       return `<td class="${c.cls || ""}" ${tint}>${c.f ? c.f(v) : v}</td>`;
@@ -690,6 +739,13 @@ function renderTable() {
       <td class="l marks"><button class="ghost" data-mark="picked" title="Picked by another alliance">✓</button> <button class="ghost" data-mark="dnp" title="Do not pick">✕</button> <button class="ghost" data-cmp title="Add to compare">+</button></td></tr>`;
   }).join("");
   $("rankTable").innerHTML = head + `<tbody>${body}</tbody>`;
+}
+// Teams on TBA's team list for the event that have no scans yet
+function renderUnscouted() {
+  const registered = Object.keys(S.tba?.teams || {}), scouted = new Set(S.raw.map(r => String(r[C.team])));
+  const unscouted = registered.filter(team => !scouted.has(team)).sort((a, b) => a - b);
+  $("unscouted").innerHTML = !unscouted.length ? "" : `<b>Not scouted yet: ${unscouted.length} of ${registered.length} teams at ${esc(S.tba.name)}</b> · ` +
+    unscouted.map(team => `${esc(team)} ${esc(teamName(team))}`).join(" · ");
 }
 
 // ---------------------------------------------------------------- team detail
@@ -703,13 +759,20 @@ function renderDetail() {
   const chips = key => { const c = counts(key); return c.length ? c.map(([v, n]) => `<span class="chip">${esc(v)} <b>${n}</b></span>`).join("") : '<span class="chip">–</span>'; };
   const notes = t.rows.filter(r => String(r[C.notes]).trim() || String(r[C.problems]).trim())
     .map(r => `<li><span class="m">Q${esc(r[C.match])} · ${esc(r[C.scout])}</span>${esc(r[C.notes])}${String(r[C.problems]).trim() ? ` <span class="tag dnp">${esc(r[C.problems])}</span>` : ""}</li>`).reverse().join("");
+  // Name, home town and robot photo from TBA's team list
+  const info = S.tba?.info[t.team] || {}, place = [info.city, info.state].filter(Boolean).join(", ");
+  const who = teamName(t.team) || place || info.img ? `<div class="detail-head">` +
+    (info.img ? `<a href="${esc(info.img)}" target="_blank" rel="noopener"><img class="robot" src="${esc(info.img)}" alt="Robot of team ${esc(t.team)}" loading="lazy" referrerpolicy="no-referrer"></a>` : "") +
+    `<div><b>${esc(teamName(t.team))}</b>${place ? `<br><span class="tinfo">${esc(place)}</span>` : ""}</div></div>` : "";
   card.innerHTML = `
     <div class="detail-head">
       <h2 style="margin:0">Team <span class="big">${esc(t.team)}</span></h2>
       <span class="chip">Rank <b>#${t.rank}</b> of ${T.length}</span><span class="chip">Score <b>${t.score.toFixed(0)}</b></span>
       <span class="chip">${t.n} matches${S.win ? " (last " + S.win + ")" : ""}</span>
+      ${S.prior ? `<span class="chip" title="Last year's edition of this event">Last year: <b>${esc(priorText(t.team))}</b></span>` : ""}
       <select id="teamSelect" style="margin-left:auto">${[...T].sort((a, b) => a.team - b.team).map(x => `<option ${x.team === t.team ? "selected" : ""}>${x.team}</option>`).join("")}</select>
     </div>
+    ${who}
     <div class="mini">
       <div><div class="k">Avg total pts</div><div class="v">${f1(t.total)}</div>${d(t.total, T.avg.total, f1)}</div>
       <div><div class="k">Auto pts</div><div class="v">${f1(t.auto)}</div>${d(t.auto, T.avg.auto, f1)}</div>
@@ -724,12 +787,49 @@ function renderDetail() {
     <details><summary>Show as table</summary><div class="tablewrap"><table>
       <thead><tr><th class="l">Match</th><th>Auto</th><th>Teleop</th><th>Climb</th><th>Total</th><th class="l">Scout</th></tr></thead>
       <tbody>${t.rows.map(r => `<tr><td class="l">Q${esc(r[C.match])}</td><td>${num(r[C.autoPts])}</td><td>${num(r[C.telePts])}</td><td>${num(r[C.climbPts])}</td><td>${num(r[C.total])}</td><td class="l">${esc(r[C.scout])}</td></tr>`).join("")}</tbody></table></div></details>
+    ${scheduleHtml(t)}
     <h3>Intake from</h3><div class="chips">${chips(C.intake)}</div>
     <h3>Shoots from</h3><div class="chips">${chips(C.shoot)}</div>
     <h3>When Hub is inactive</h3><div class="chips">${chips(C.inactive)}</div>
     <h3>Climb</h3><div class="chips">${chips(C.climb)}</div>
     <h3>Scout notes</h3><ul class="notes">${notes || '<li class="empty">No notes</li>'}</ul>`;
   matchChart(t);
+}
+
+// The team's matches on the TBA schedule, with TBA's result and whether we have a scan for it
+const LEVEL_ORDER = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
+function matchLabel(m) {
+  if (m.level === "qm") return "Q" + m.num;
+  if (m.level === "f") return "F" + m.num;
+  if (m.level === "sf" && parseInt(S.tba.key) >= 2023) return "P" + m.set;   // double-elimination playoff match
+  return m.level.toUpperCase() + m.set + "-" + m.num;
+}
+function scheduleHtml(t) {
+  const ms = (S.tba?.matches || []).filter(m => m.red.includes(t.team) || m.blue.includes(t.team))
+    .sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level] || (a.set ?? 1) - (b.set ?? 1) || a.num - b.num);
+  if (!ms.length) return "";
+  const when = s => new Date(s * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const list = teams => teams.filter(x => x !== t.team).map(x => `<span title="${esc(teamName(x))}">${esc(x)}</span>`).join(", ");
+  let scanned = 0, playedQuals = 0;
+  const rows = ms.map(m => {
+    const side = m.red.includes(t.team) ? "red" : "blue", other = side === "red" ? "blue" : "red";
+    const us = m[side + "Score"], them = m[other + "Score"], played = us != null && them != null;
+    let result = m.time ? when(m.time) : "upcoming";
+    if (played) result = `${us > them ? "W" : us < them ? "L" : "T"} ${us}–${them}`;
+    // Scans can only be matched to quals: playoff match numbers aren't entered the same way
+    let ours = "–";
+    if (m.level === "qm") {
+      const scan = S.raw.find(r => String(r[C.team]) === t.team && num(r[C.match]) === m.num && String(r[C.type] || "Qual") === "Qual");
+      if (played) playedQuals++;
+      if (scan) { scanned++; ours = `✓ ${num(scan[C.total])} pts · ${esc(scan[C.scout])}`; }
+      else ours = played ? `<span class="miss">not scouted</span>` : "";
+    }
+    return `<tr><td class="l"><b>${matchLabel(m)}</b></td><td class="l ${side}">${side === "red" ? "Red" : "Blue"} with ${list(m[side])}</td>` +
+      `<td class="l ${other}">${list(m[other])}</td><td>${result}</td><td class="l">${ours}</td></tr>`;
+  }).join("");
+  return `<h3>Matches at ${esc(S.tba.name)} (from TBA)</h3>` +
+    `<p class="hint" style="margin:0 0 4px">${scanned} of ${playedQuals} played quals scouted. Result is TBA's alliance score; our scan shows the points the scout gave this robot.</p>` +
+    `<div class="tablewrap"><table class="sched"><thead><tr><th class="l">Match</th><th class="l">Alliance</th><th class="l">Against</th><th>Result</th><th class="l">Our scan</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function matchChart(t) {
@@ -1035,7 +1135,7 @@ $("presets").onclick = e => {
 };
 $("rankTable").onclick = e => {
   const th = e.target.closest("th[data-sort]");
-  if (th) { const k = th.dataset.sort; S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : (k === "rank" || k === "team" ? 1 : -1) }; renderTable(); return; }
+  if (th) { const k = th.dataset.sort; S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : (["rank", "team", "prior"].includes(k) ? 1 : -1) }; renderTable(); return; }
   const tr = e.target.closest("tr[data-team]"); if (!tr) return;
   const team = tr.dataset.team, mb = e.target.closest("button");
   if (mb && mb.dataset.mark) { S.marks[team] = S.marks[team] === mb.dataset.mark ? undefined : mb.dataset.mark; store.set("marks", S.marks); renderTable(); renderBuilder(); renderSleepers(); return; }
@@ -1077,11 +1177,10 @@ if (!PER_MATCH[S.boxMetric]) S.boxMetric = "total";
 $("boxMetric").value = S.boxMetric;
 $("boxMetric").onchange = e => { S.boxMetric = e.target.value; store.set("boxMetric", S.boxMetric); renderBoxes(); };
 
-// TBA event for the scouting check
+// Look at another TBA event for now; the next visit starts again with the one in data/event.js
 function pickEvent() {
   const key = $("tbaEvent").value.trim().toLowerCase(); if (!key) return;
   S.tbaEvent = key;
-  if (!S.isSample) store.set("tbaEvent", key);
   loadTba();
 }
 $("tbaLoad").onclick = pickEvent;

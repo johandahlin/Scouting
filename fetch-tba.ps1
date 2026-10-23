@@ -1,9 +1,10 @@
-# Save a snapshot of a The Blue Alliance event (teams, schedule + results, rankings) for matches.html.
+# Save a snapshot of a The Blue Alliance event (teams, schedule + results, rankings) for matches.html and dashboard.html.
 # Reads the public event page, so no TBA API key is needed. Re-run during the event to refresh.
 # Usage: powershell -ExecutionPolicy Bypass -File fetch-tba.ps1 [-EventKey 2026iltrr]
-# Writes data\tba-<event>.js
-param([string]$EventKey = "2026iltrr")
+# Without -EventKey it uses the event in data\event.js. Writes data\tba-<event>.js
+param([string]$EventKey = "")
 $ErrorActionPreference = "Stop"
+if (-not $EventKey) { $EventKey = [regex]::Match((Get-Content (Join-Path $PSScriptRoot "data\event.js") -Raw), 'DERT_EVENT\s*=\s*"([^"]+)"').Groups[1].Value }
 $EventKey = $EventKey.ToLower()
 $h = (Invoke-WebRequest "https://www.thebluealliance.com/event/$EventKey" -UseBasicParsing -TimeoutSec 60).Content
 
@@ -72,14 +73,34 @@ if ($rt.Success) {
   }
 }
 
+# Scouting tab CSVs: Team List (home town, robot photo) and Schedule (start times, in the event's local time)
+function Csv($id) {
+  $m = [regex]::Match($h, "(?s)<textarea id=""$id""[^>]*>(.*?)</textarea>")
+  $text = if ($m.Success) { [Net.WebUtility]::HtmlDecode($m.Groups[1].Value).Trim() } else { "" }
+  if ($text) { @($text -split "\r?\n" | ConvertFrom-Csv) } else { @() }
+}
+$info = [ordered]@{}
+foreach ($t in Csv "team-list-csv") {
+  $info[$t.team_number] = [ordered]@{ city = $t.city; state = $t.state_prov; img = $t.robot_image_url }
+  if (-not $teams.Contains($t.team_number)) { $teams[$t.team_number] = $t.team_name }
+}
+$times = 0
+foreach ($s in Csv "schedule-csv") {
+  $dt = [datetime]::MinValue
+  if ($byKey.Contains($s.match_key) -and [datetime]::TryParseExact("$($s.scheduled_date) $($s.scheduled_time)", "yyyy-MM-dd hh:mm tt",
+      [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeLocal, [ref]$dt)) {
+    $byKey[$s.match_key].time = ([DateTimeOffset]$dt).ToUnixTimeSeconds(); $times++
+  }
+}
+
 $data = [ordered]@{
   key = $EventKey; name = $name; fetched = (Get-Date).ToUniversalTime().ToString("o")
-  teams = $teams; rankCols = $rankCols; rankings = $rankings; matches = @($byKey.Values)
+  teams = $teams; info = $info; rankCols = $rankCols; rankings = $rankings; matches = @($byKey.Values)
 }
 $json = ConvertTo-Json -InputObject $data -Depth 6 -Compress
 $js = "// Snapshot of https://www.thebluealliance.com/event/$EventKey saved by fetch-tba.ps1 on $(Get-Date -Format 'yyyy-MM-dd HH:mm')`n" +
       "window.TBA_EVENTS = window.TBA_EVENTS || {};`nTBA_EVENTS[""$EventKey""] = $json;`n"
 $out = Join-Path $PSScriptRoot "data\tba-$EventKey.js"
 [IO.File]::WriteAllText($out, $js, (New-Object Text.UTF8Encoding $false))
-"$name : $($teams.Count) teams, $($byKey.Count) matches ($(@($byKey.Values | Where-Object { $null -ne $_.redScore }).Count) played), $($rankings.Count) ranked"
+"$name : $($teams.Count) teams ($(@($info.Values | Where-Object { $_.img }).Count) with robot photos), $($byKey.Count) matches ($(@($byKey.Values | Where-Object { $null -ne $_.redScore }).Count) played, $times with start times), $($rankings.Count) ranked"
 "Saved $out"
