@@ -7,7 +7,7 @@ $rng = New-Object System.Random 2040
 function Rnd() { $rng.NextDouble() }
 function Pick($arr) { $arr[$rng.Next($arr.Count)] }
 function Gauss() { $u1 = 1.0 - (Rnd); $u2 = Rnd; [Math]::Sqrt(-2 * [Math]::Log($u1)) * [Math]::Sin(2 * [Math]::PI * $u2) }
-$EN = [char]0x2013   # en dash used by the web form options
+$EN = " to "   # range separator in the web form options ("11 to 25": Excel turns "11-25" into a date)
 
 # ---------- OPR (least squares) for teleop fuel and auto fuel ----------
 $teams = $d | ForEach-Object { $_.red + $_.blue } | Sort-Object -Unique

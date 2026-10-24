@@ -1,6 +1,6 @@
 // Caches the app so it keeps working at events without signal.
 // Bump VERSION whenever you change any of the files below.
-const VERSION = "scout-v7";
+const VERSION = "scout-v8";   // app v1.3
 const FILES = ["./", "index.html", "qrcode.min.js", "logo.png", "icon-180.png", "icon-512.png", "manifest.json"];
 
 self.addEventListener("install", e => {

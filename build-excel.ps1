@@ -1,6 +1,9 @@
 ﻿param([string]$Out = "D:\JD Projects\DERT\QRCodeTest\DERT_Scouting_REBUILT.xlsx", [switch]$Test)
 $ErrorActionPreference = "Stop"
 
+# Workbook version, shown in every sheet title. Keep it the same as the web app version (top of index.html).
+$version = "1.3"
+
 # Must match the column order produced by index.html (Schema stamp + FIELDS + computed columns)
 $headers = @(
   "Schema","Match type","Match #","Team #","Alliance","Station","Scout name","Robot on field?","Starting position","Fuel preloaded",
@@ -70,7 +73,7 @@ try {
 
   function Title($ws, $text, $sub, $lastCol) {
     $r = $ws.Range("A1:$($lastCol)1"); $r.Interior.Color = $DARK
-    $ws.Range("A1").Value2 = $text; $ws.Range("A1").Font.Size = 16; $ws.Range("A1").Font.Bold = $true; $ws.Range("A1").Font.Color = $LIGHT
+    $ws.Range("A1").Value2 = "$text   (v$version)"; $ws.Range("A1").Font.Size = 16; $ws.Range("A1").Font.Bold = $true; $ws.Range("A1").Font.Color = $LIGHT
     $ws.Rows.Item(1).RowHeight = 28
     $r2 = $ws.Range("A2:$($lastCol)2"); $r2.Interior.Color = $TEAL
     $ws.Range("A2").Value2 = $sub; $ws.Range("A2").Font.Color = $DARK; $ws.Range("A2").Font.Bold = $true
@@ -312,6 +315,9 @@ FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE),"✓ Nothing to fix"))
   Title $info "DERT #2040 - REBUILT Scouting Workbook" "Import data from the DERT Scout web app (index.html) by scanning its QR codes." "J"
   $info.Columns.Item(1).ColumnWidth = 4; $info.Columns.Item(2).ColumnWidth = 110
   $lines = @(
+    @("h","VERSION $version"),
+    @("-","This is workbook version $version. Use it with the DERT Scout web app v${version}: every app page shows its version at the top."),
+    @("", "   A phone shows an older version? Open the app on Wi-Fi and reload the page to update it."),
     @("h","ONE-TIME SETUP (each laptop)"),
     @("1","Turn OFF Excel AutoComplete: File > Options > Advanced > uncheck 'Enable AutoComplete for cell values'."),
     @("", "   Otherwise Excel may 'finish' a scanned value for you (e.g. 'Depot' becomes 'Depot; Outpost') and the data will be wrong."),
@@ -337,6 +343,8 @@ FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE),"✓ Nothing to fix"))
     @("-","Teal header = column names (must match the web app).   Yellow cell = type here.   Everything else is calculated or scanned - don't edit."),
     @("-","Points: fuel in active Hub = 1 pt. Tower Level 1 = 15 pts in auto / 10 pts in teleop, Level 2 = 20, Level 3 = 30 (2026 REBUILT Game Manual, Table 6-4)."),
     @("-","Ratings (Driver skill, Robot speed, Shooting accuracy) are 1 = poor to 5 = great. Multi-choice answers are separated by '; '."),
+    @("-","QR codes hold plain ASCII only (accents, curly quotes and emoji are simplified or dropped) so every scanner types them correctly."),
+    @("", "   Text that starts with = + - or @ gets a leading space so Excel keeps it as text instead of a formula."),
     @("-","Requires Microsoft 365 or Excel 2024 (uses FILTER, SORTBY, HSTACK, VSTACK, TEXTBEFORE). Excel 2021 and older show #NAME? errors."),
     @("-","Schema (column A) is filled in by every QR code ($schema for this workbook). A RED row came from a different version"),
     @("", "   of the scouting form, so its answers are in the wrong columns: delete it, update the app on that phone (open it on Wi-Fi), scan again."),
@@ -357,8 +365,8 @@ FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE),"✓ Nothing to fix"))
     $r++
   }
   $example = @($schema,"Qual",12,2040,"Blue",2,"Alex",'Yes',"Center",8,8,2,"Left start line; Went to Neutral Zone","Depot","Level 1",
-               47,9,"Neutral Zone floor; Depot","Close to Hub; Mid range","Bump","Collects / stockpiles","26–40","None","Some",
-               "Level 3","5–10 s",4,4,4,"",0,0,"None","Yes","Fast shooter, very consistent climb",23,47,30,100,"10/6/2026, 3:45:12 PM")
+               47,9,"Neutral Zone floor; Depot","Close to Hub; Mid range","Bump","Collects / stockpiles","26 to 40","None","Some",
+               "Level 3","5 to 10 s",4,4,4,"",0,0,"None","Yes","Fast shooter, very consistent climb",23,47,30,100,"10/6/2026, 3:45:12 PM")
   $exStart = $r
   # Example as a two-column list (header -> value) so it is readable
   for ($i = 0; $i -lt $n; $i++) {
@@ -369,9 +377,9 @@ FILTER(all,IFERROR(INDEX(all,,1)<>"",FALSE),"✓ Nothing to fix"))
   if ($Test) {
     # Fill test data to verify formulas
     $rows = @(
-      @($schema,"Qual",1,2040,"Blue",1,"A","Yes","Left",8,8,2,"","Depot","Level 1",40,10,"Depot","Close to Hub","Bump","","26–40","None","No","Level 3","5–10 s",4,4,4,"",0,0,"None","Yes","",23,40,30,93,"x"),
-      @($schema,"Qual",5,2040,"Blue",2,"B","Yes","Left",8,6,0,"","","None",30,10,"","","","","26–40","Some","No","Level 2","5–10 s",2,4,4,"Fuel jam",1,1,"None","Maybe","",6,30,20,56,"x"),
-      @($schema,"Qual",2,111,"Red",3,"C","Yes","Left",8,2,2,"","","None",10,10,"","","","","1–10","None","No","None","",3,3,3,"",0,0,"None","No","",2,10,0,12,"x")
+      @($schema,"Qual",1,2040,"Blue",1,"A","Yes","Left",8,8,2,"","Depot","Level 1",40,10,"Depot","Close to Hub","Bump","","26 to 40","None","No","Level 3","5 to 10 s",4,4,4,"",0,0,"None","Yes","",23,40,30,93,"x"),
+      @($schema,"Qual",5,2040,"Blue",2,"B","Yes","Left",8,6,0,"","","None",30,10,"","","","","26 to 40","Some","No","Level 2","5 to 10 s",2,4,4,"Fuel jam",1,1,"None","Maybe","",6,30,20,56,"x"),
+      @($schema,"Qual",2,111,"Red",3,"C","Yes","Left",8,2,2,"","","None",10,10,"","","","","1 to 10","None","No","None","",3,3,3,"",0,0,"None","No","",2,10,0,12,"x")
     )
     for ($ri = 0; $ri -lt $rows.Count; $ri++) {
       for ($ci = 0; $ci -lt $n; $ci++) {
