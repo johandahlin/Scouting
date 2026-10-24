@@ -182,6 +182,7 @@
       <a class="nav" href="matches.html">Match predictor</a>
       <span id="sourceName">No data</span>
       <button id="loadBtn">Load Excel file…</button>
+      <button id="eventBtn" title="DERT_Scouting_REBUILTEventData.xlsx: TBA results for this event, estimated per robot">Use event data</button>
       <button id="sampleBtn" class="ghost">Use sample data</button>
       <input type="file" id="file" accept=".xlsx,.xls,.csv" hidden>
     </div>
@@ -439,15 +440,20 @@ function loadSample() {
   setData(SAMPLE_DATA.headers, SAMPLE_DATA.rows, SAMPLE_DATA.name);
   store.set("lastSource", "sample");
 }
+// The Scans sheet of a workbook (ArrayBuffer) as headers + rows
+function readScans(buffer) {
+  const wb = XLSX.read(new Uint8Array(buffer), { type: "array" });
+  const sheetName = wb.SheetNames.includes("Scans") ? "Scans" : wb.SheetNames[0];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: "" });
+  const headers = rows.shift().map(h => String(h).trim());
+  return { headers, rows };
+}
 function loadFile(file) {
   if (!window.XLSX) return alertBox("Excel reader (xlsx.full.min.js) not found next to dashboard.html.");
   const reader = new FileReader();
   reader.onload = e => {
     try {
-      const wb = XLSX.read(new Uint8Array(e.target.result), { type: "array" });
-      const sheetName = wb.SheetNames.includes("Scans") ? "Scans" : wb.SheetNames[0];
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: "" });
-      const headers = rows.shift().map(h => String(h).trim());
+      const { headers, rows } = readScans(e.target.result);
       useSource(false);
       setData(headers, rows, file.name);
       store.set("lastFile", { name: file.name, headers, rows });
@@ -455,6 +461,22 @@ function loadFile(file) {
     } catch (err) { alertBox("Could not read that file: " + err.message); }
   };
   reader.readAsArrayBuffer(file);
+}
+// Event workbook next to this page, made by build-event-excel.ps1 from TBA's results (estimated per robot, not scouted).
+// Always fetched fresh, so re-running the script and pushing updates it.
+const EVENT_FILE = "DERT_Scouting_REBUILTEventData.xlsx";
+function loadEvent() {
+  if (!window.XLSX) return alertBox("Excel reader (xlsx.full.min.js) not found next to dashboard.html.");
+  fetch(EVENT_FILE, { cache: "no-store" })
+    .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.arrayBuffer(); })
+    .then(buffer => {
+      const { headers, rows } = readScans(buffer);
+      useSource(false);
+      setData(headers, rows, "Event data (TBA estimate)");
+      store.set("lastSource", "event");
+    })
+    .catch(err => alertBox(`Could not load ${EVENT_FILE} (${err.message}). It loads when the dashboard is opened from the website ` +
+      `or serve.ps1; from a file on disk, use "Load Excel file…" and pick it instead.`));
 }
 function alertBox(msg) { $("tiles").innerHTML = `<div class="tile" style="grid-column:1/-1;border-color:var(--bad)"><div class="k">Problem</div><div>${esc(msg)}</div></div>`; }
 
@@ -1147,6 +1169,7 @@ function renderSleepers() {
 $("loadBtn").onclick = () => $("file").click();
 $("file").onchange = e => e.target.files[0] && loadFile(e.target.files[0]);
 $("sampleBtn").onclick = loadSample;
+$("eventBtn").onclick = loadEvent;
 document.addEventListener("dragover", e => { e.preventDefault(); document.body.classList.add("drop"); });
 document.addEventListener("dragleave", e => { if (!e.relatedTarget) document.body.classList.remove("drop"); });
 document.addEventListener("drop", e => { e.preventDefault(); document.body.classList.remove("drop"); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
@@ -1253,10 +1276,11 @@ document.addEventListener("mousemove", e => {
 });
 let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderDetail(); renderScatter(); renderPhases(); renderBoxes(); renderCompare(); renderSleepers(); }, 150); });
 
-// ---------------------------------------------------------------- start: last file, else sample
+// ---------------------------------------------------------------- start: last file or event data, else sample
 (function init() {
   const last = store.get("lastSource", "sample"), file = store.get("lastFile", null);
   if (last === "file" && file) { useSource(false); setData(file.headers, file.rows, file.name); }
+  else if (last === "event") loadEvent();
   else if (window.SAMPLE_DATA) loadSample();
   else { render(); renderCheck(); }
   loadPhotos();

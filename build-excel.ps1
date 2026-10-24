@@ -85,7 +85,7 @@ try {
   # ---------------- TBA Schedule ----------------
   # The data lead pastes TBA's Flat Schedule CSV into A5 (one robot per line: match_key,date,time,comp_level,
   # match_number,set_number,color,team). Excel either keeps each line in one cell or splits it over A:H;
-  # the formula in R5 reads both and returns the qual matches as Match # | Alliance | Team #.
+  # the formula in R5 reads both and returns the qual matches as Match # | Alliance | Team #. A B robot (1706B, a team's second robot) stays text.
   Title $sched "DERT #2040 - TBA Schedule" "Paste TBA's Flat Schedule here so the Scouting Check can find unscouted robots, team-number typos and wrong alliances." "T"
   $sched.Range("A4").Value2 = "Paste the Flat Schedule here: click the yellow cell, then press Ctrl+V"
   $sched.Range("A4").Font.Bold = $true
@@ -114,8 +114,9 @@ t,","&line&",",
 lvl,IFERROR(TEXTBEFORE(TEXTAFTER(t,",",4),","),""),
 num,IFERROR(--TEXTBEFORE(TEXTAFTER(t,",",5),","),""),
 side,LOWER(IFERROR(TEXTBEFORE(TEXTAFTER(t,",",7),","),"")),
-tm,IFERROR(--TEXTBEFORE(TEXTAFTER(t,",",8),","),""),
-keep,ISNUMBER(num)*ISNUMBER(tm)*(lvl="qm")*((side="red")+(side="blue")),
+tr,IFERROR(TEXTBEFORE(TEXTAFTER(t,",",8),","),""),
+tm,IFERROR(--tr,UPPER(tr)),
+keep,ISNUMBER(num)*(tr<>"")*(lvl="qm")*((side="red")+(side="blue")),
 IFERROR(FILTER(HSTACK(num,PROPER(side),tm),keep),HSTACK("","","")))
 '@
 
